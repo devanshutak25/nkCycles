@@ -218,6 +218,8 @@ if(WITH_CYCLES_HYDRA_RENDER_DELEGATE)
   if (HOUDINI_FOUND)
     delayed_install("${CMAKE_CURRENT_BINARY_DIR}/resources" "plugInfo.json" "${CYCLES_HYDRA_INSTALL_PATH}/usd_plugins/${HdCyclesPluginName}/resources")
     delayed_install("${CMAKE_CURRENT_BINARY_DIR}/resources" "cycles.json" "${CMAKE_INSTALL_PREFIX}/houdini/packages")
+    # Register the delegate with Houdini, so it is listed in Solaris and husk.
+    delayed_install("${CMAKE_CURRENT_SOURCE_DIR}/resources" "UsdRenderers.json" "${CMAKE_INSTALL_PREFIX}/houdini")
   else()
     delayed_install("${CMAKE_CURRENT_BINARY_DIR}/resources" "plugInfo.json" "${CYCLES_HYDRA_INSTALL_PATH}/${HdCyclesPluginName}/resources")
   endif()

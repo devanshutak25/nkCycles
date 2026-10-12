@@ -1,0 +1,13 @@
+{
+    "HdCyclesPlugin" : {
+        "valid" : true,
+        "menulabel" : "Cycles",
+        "menupriority" : 10,
+        "defaultpurposes" : [ "render" ],
+        "drawmodesupport" : false,
+        "needsdepth" : false,
+        "needsselection" : true,
+        "depthstyle" : "linear",
+        "husk.default_output" : "cycles.exr"
+    }
+}
