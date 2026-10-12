@@ -61,7 +61,7 @@ void HdCyclesCurves::Populate(HdSceneDelegate *sceneDelegate, HdDirtyBits dirtyB
 void HdCyclesCurves::PopulatePoints(HdSceneDelegate *sceneDelegate)
 {
   const HdSceneIndexPrim prim = GetPrim(sceneDelegate, GetId());
-  const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
+  HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
   const VtValue value = ReadPrimvar(primvars, HdTokens->points);
 
   if (!value.IsHolding<VtVec3fArray>()) {
@@ -83,7 +83,7 @@ void HdCyclesCurves::PopulatePoints(HdSceneDelegate *sceneDelegate)
 void HdCyclesCurves::PopulateWidths(HdSceneDelegate *sceneDelegate)
 {
   const HdSceneIndexPrim prim = GetPrim(sceneDelegate, GetId());
-  const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
+  HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
   const VtValue value = ReadPrimvar(primvars, HdTokens->widths);
   const HdInterpolation interpolation = ReadPrimvarInterpolation(primvars, HdTokens->widths);
 
@@ -118,7 +118,7 @@ void HdCyclesCurves::PopulatePrimvars(HdSceneDelegate *sceneDelegate)
   Scene *const scene = (Scene *)_geom->get_owner();
 
   const HdSceneIndexPrim prim = GetPrim(sceneDelegate, GetId());
-  const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
+  HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
 
   const std::pair<HdInterpolation, AttributeElement> interpolations[] = {
       std::make_pair(HdInterpolationVertex, ATTR_ELEMENT_CURVE_KEY),
@@ -178,7 +178,7 @@ void HdCyclesCurves::PopulateTopology(HdSceneDelegate *sceneDelegate)
   _geom->clear(true);
 
   const HdSceneIndexPrim prim = GetPrim(sceneDelegate, GetId());
-  const HdBasisCurvesTopologySchema topoSchema =
+  HdBasisCurvesTopologySchema topoSchema =
       HdBasisCurvesSchema::GetFromParent(prim.dataSource).GetTopology();
 
   TfToken curveType = HdTokens->linear;

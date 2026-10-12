@@ -88,18 +88,17 @@ void SampleTyped(const typename PXR_NS::HdTypedSampledDataSource<T>::Handle &ds,
 }
 
 /* Read a primvar's value at shutter offset 0. */
-PXR_NS::VtValue ReadPrimvar(const PXR_NS::HdPrimvarsSchema &primvars, const PXR_NS::TfToken &name);
+PXR_NS::VtValue ReadPrimvar(PXR_NS::HdPrimvarsSchema primvars, const PXR_NS::TfToken &name);
 
 /* Read a primvar's interpolation. */
-PXR_NS::HdInterpolation ReadPrimvarInterpolation(const PXR_NS::HdPrimvarsSchema &primvars,
+PXR_NS::HdInterpolation ReadPrimvarInterpolation(PXR_NS::HdPrimvarsSchema primvars,
                                                  const PXR_NS::TfToken &name);
 
 /* Read a primvar's role token. */
-PXR_NS::TfToken ReadPrimvarRole(const PXR_NS::HdPrimvarsSchema &primvars,
-                                const PXR_NS::TfToken &name);
+PXR_NS::TfToken ReadPrimvarRole(PXR_NS::HdPrimvarsSchema primvars, const PXR_NS::TfToken &name);
 
 /* Enumerate primvar names whose interpolation matches. */
-PXR_NS::TfTokenVector PrimvarNamesAtInterpolation(const PXR_NS::HdPrimvarsSchema &primvars,
+PXR_NS::TfTokenVector PrimvarNamesAtInterpolation(PXR_NS::HdPrimvarsSchema primvars,
                                                   PXR_NS::HdInterpolation interpolation);
 
 /* Convert a Hydra primvar value to a Cycles attribute. */

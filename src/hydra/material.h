@@ -9,9 +9,9 @@
 
 #include "util/unique_ptr.h"
 
+#include "hydra/usd_compat.h"
 #include <pxr/imaging/hd/material.h>
 #include <pxr/imaging/hd/materialNetworkSchema.h>
-#include <pxr/imaging/hd/materialNodeParameterSchema.h>
 #include <pxr/imaging/hd/materialNodeSchema.h>
 
 HDCYCLES_NAMESPACE_OPEN_SCOPE

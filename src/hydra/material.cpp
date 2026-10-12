@@ -22,7 +22,6 @@
 #include <pxr/imaging/hd/material.h>
 #include <pxr/imaging/hd/materialConnectionSchema.h>
 #include <pxr/imaging/hd/materialNetworkSchema.h>
-#include <pxr/imaging/hd/materialNodeParameterSchema.h>
 #include <pxr/imaging/hd/materialNodeSchema.h>
 #include <pxr/imaging/hd/materialSchema.h>
 #include <pxr/imaging/hd/sceneDelegate.h>
@@ -428,7 +427,7 @@ void HdCyclesMaterial::Sync(HdSceneDelegate *sceneDelegate,
     const HdSceneIndexPrim prim = GetPrim(sceneDelegate, id);
     const HdContainerDataSourceHandle &primDs = prim.dataSource;
 
-    HdMaterialSchema matSchema = HdMaterialSchema::GetFromParent(primDs);
+    HdCyclesMaterialSchema matSchema = HdMaterialSchema::GetFromParent(primDs);
     /* Prefer cycles network if it exists, then MaterialX, otherwise use universal network. */
     HdMaterialNetworkSchema network = matSchema.GetMaterialNetwork(CyclesMaterialTokens->cycles);
 #ifdef WITH_HYDRA_MATERIALX
@@ -756,7 +755,9 @@ unique_ptr<ShaderGraph> HdCyclesMaterial::BuildShaderGraph(HdMaterialNetworkSche
          aovIt = _nodes.find(upstreamNodePath))
     {
       HdMaterialConnectionVectorSchema connVec =
-          nodes.Get(nodeNames[upstreamNodePath]).GetInputConnections().Get(kAovPassThroughInput);
+          HdMaterialConnectionVectorContainerSchema(
+              nodes.Get(nodeNames[upstreamNodePath]).GetInputConnections())
+              .Get(kAovPassThroughInput);
       if (connVec.GetNumElements() == 0) {
         upstreamNodePath = SdfPath();
         break;

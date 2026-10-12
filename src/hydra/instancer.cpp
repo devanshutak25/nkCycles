@@ -4,6 +4,7 @@
  * SPDX-License-Identifier: Apache-2.0 */
 
 #include "hydra/instancer.h"
+#include "hydra/usd_compat.h"
 #include "hydra/util.h"
 
 #include <pxr/base/gf/quatd.h>
@@ -55,12 +56,12 @@ void HdCyclesInstancer::SyncPrimvars()
     }
   };
 
-  read_array_primvar(HdInstancerTokens->instanceTranslations, _translate);
-  read_array_primvar(HdInstancerTokens->instanceScales, _scale);
-  read_array_primvar(HdInstancerTokens->instanceTransforms, _instanceTransform);
+  read_array_primvar(HdCyclesInstancerTokens->instanceTranslations, _translate);
+  read_array_primvar(HdCyclesInstancerTokens->instanceScales, _scale);
+  read_array_primvar(HdCyclesInstancerTokens->instanceTransforms, _instanceTransform);
 
   /* Accept different array types for quaternions. */
-  if (HdPrimvarSchema pv = primvars.GetPrimvar(HdInstancerTokens->instanceRotations)) {
+  if (HdPrimvarSchema pv = primvars.GetPrimvar(HdCyclesInstancerTokens->instanceRotations)) {
     if (auto valueDs = pv.GetPrimvarValue()) {
       const VtValue v = valueDs->GetValue(0.0f);
       if (v.IsHolding<VtVec4fArray>()) {

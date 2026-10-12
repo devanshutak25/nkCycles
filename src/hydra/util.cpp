@@ -29,7 +29,7 @@ HdSceneIndexPrim GetPrim(HdSceneDelegate *delegate, const SdfPath &id)
   return si->GetPrim(id);
 }
 
-VtValue ReadPrimvar(const HdPrimvarsSchema &primvars, const TfToken &name)
+VtValue ReadPrimvar(HdPrimvarsSchema primvars, const TfToken &name)
 {
   if (!primvars) {
     return {};
@@ -38,7 +38,7 @@ VtValue ReadPrimvar(const HdPrimvarsSchema &primvars, const TfToken &name)
   return ds ? ds->GetValue(0.0f) : VtValue();
 }
 
-HdInterpolation ReadPrimvarInterpolation(const HdPrimvarsSchema &primvars, const TfToken &name)
+HdInterpolation ReadPrimvarInterpolation(HdPrimvarsSchema primvars, const TfToken &name)
 {
   if (!primvars) {
     return HdInterpolationCount;
@@ -69,7 +69,7 @@ HdInterpolation ReadPrimvarInterpolation(const HdPrimvarsSchema &primvars, const
   return HdInterpolationCount;
 }
 
-TfToken ReadPrimvarRole(const HdPrimvarsSchema &primvars, const TfToken &name)
+TfToken ReadPrimvarRole(HdPrimvarsSchema primvars, const TfToken &name)
 {
   if (!primvars) {
     return {};
@@ -78,8 +78,7 @@ TfToken ReadPrimvarRole(const HdPrimvarsSchema &primvars, const TfToken &name)
   return ds ? ds->GetTypedValue(0.0f) : TfToken();
 }
 
-TfTokenVector PrimvarNamesAtInterpolation(const HdPrimvarsSchema &primvars,
-                                          HdInterpolation interpolation)
+TfTokenVector PrimvarNamesAtInterpolation(HdPrimvarsSchema primvars, HdInterpolation interpolation)
 {
   TfTokenVector result;
   if (!primvars) {

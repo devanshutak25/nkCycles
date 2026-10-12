@@ -8,11 +8,11 @@
 #include "hydra/util.h"
 #include "scene/mesh.h"
 
+#include "hydra/usd_compat.h"
 #include <pxr/base/gf/vec2f.h>
 #include <pxr/imaging/hd/geomSubsetSchema.h>
 #include <pxr/imaging/hd/legacyDisplayStyleSchema.h>
 #include <pxr/imaging/hd/materialBindingSchema.h>
-#include <pxr/imaging/hd/materialBindingsSchema.h>
 #include <pxr/imaging/hd/meshSchema.h>
 #include <pxr/imaging/hd/meshTopologySchema.h>
 #include <pxr/imaging/hd/sceneIndex.h>
@@ -161,7 +161,7 @@ void HdCyclesMesh::Populate(HdSceneDelegate *sceneDelegate, HdDirtyBits dirtyBit
 void HdCyclesMesh::PopulatePoints(HdSceneDelegate *sceneDelegate)
 {
   const HdSceneIndexPrim prim = GetPrim(sceneDelegate, GetId());
-  const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
+  HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
   const VtValue value = ReadPrimvar(primvars, HdTokens->points);
 
   if (!value.IsHolding<VtVec3fArray>()) {
@@ -193,7 +193,7 @@ void HdCyclesMesh::PopulateNormals(HdSceneDelegate *sceneDelegate)
   }
 
   const HdSceneIndexPrim prim = GetPrim(sceneDelegate, GetId());
-  const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
+  HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
   const HdInterpolation interpolation = ReadPrimvarInterpolation(primvars, HdTokens->normals);
   if (interpolation == HdInterpolationCount) {
     return;  // Ignore missing normals
@@ -256,7 +256,7 @@ void HdCyclesMesh::PopulatePrimvars(HdSceneDelegate *sceneDelegate)
   AttributeSet &attributes = subdivision ? _geom->subd_attributes : _geom->attributes;
 
   const HdSceneIndexPrim prim = GetPrim(sceneDelegate, GetId());
-  const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
+  HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
 
   const std::pair<HdInterpolation, AttributeElement> interpolations[] = {
       std::make_pair(HdInterpolationFaceVarying, ATTR_ELEMENT_CORNER),
@@ -336,7 +336,7 @@ void HdCyclesMesh::PopulateTopology(HdSceneDelegate *sceneDelegate)
   _geom->clear(true);
 
   const HdSceneIndexPrim prim = GetPrim(sceneDelegate, GetId());
-  const HdLegacyDisplayStyleSchema displayStyleSchema = HdLegacyDisplayStyleSchema::GetFromParent(
+  HdLegacyDisplayStyleSchema displayStyleSchema = HdLegacyDisplayStyleSchema::GetFromParent(
       prim.dataSource);
 
   int refineLevel = 0;
@@ -348,8 +348,8 @@ void HdCyclesMesh::PopulateTopology(HdSceneDelegate *sceneDelegate)
     flatShadingEnabled = ds->GetTypedValue(0.0f);
   }
 
-  const HdMeshSchema meshSchema = HdMeshSchema::GetFromParent(prim.dataSource);
-  const HdMeshTopologySchema topoSchema = meshSchema.GetTopology();
+  HdMeshSchema meshSchema = HdMeshSchema::GetFromParent(prim.dataSource);
+  HdMeshTopologySchema topoSchema = meshSchema.GetTopology();
 
   TfToken scheme = PxOsdOpenSubdivTokens->none;
   if (auto ds = meshSchema.GetSubdivisionScheme()) {
@@ -375,16 +375,16 @@ void HdCyclesMesh::PopulateTopology(HdSceneDelegate *sceneDelegate)
   _topology = HdMeshTopology(
       scheme, orientation, faceVertexCounts, faceVertexIndices, holeIndices, refineLevel);
 
-  /* Geom subsets are published as child prims of the mesh in the scene index. */
   HdGeomSubsets geomSubsetsList;
+#if PXR_VERSION >= 2408
+  /* Geom subsets are published as child prims of the mesh in the scene index. */
   if (HdSceneIndexBaseRefPtr si = sceneDelegate->GetRenderIndex().GetTerminalSceneIndex()) {
     for (const SdfPath &childPath : si->GetChildPrimPaths(GetId())) {
       const HdSceneIndexPrim childPrim = si->GetPrim(childPath);
       if (childPrim.primType != HdPrimTypeTokens->geomSubset) {
         continue;
       }
-      const HdGeomSubsetSchema subsetSchema = HdGeomSubsetSchema::GetFromParent(
-          childPrim.dataSource);
+      HdGeomSubsetSchema subsetSchema = HdGeomSubsetSchema::GetFromParent(childPrim.dataSource);
       /* Only face subsets supported here, not point or curve subsets. */
       if (auto typeDs = subsetSchema.GetType()) {
         if (typeDs->GetTypedValue(0.0f) != HdGeomSubsetSchemaTokens->typeFaceSet) {
@@ -405,6 +405,10 @@ void HdCyclesMesh::PopulateTopology(HdSceneDelegate *sceneDelegate)
       geomSubsetsList.push_back(subset);
     }
   }
+#else
+  /* Older USD has no geom subset prims, the legacy topology carries them. */
+  geomSubsetsList = sceneDelegate->GetMeshTopology(GetId()).GetGeomSubsets();
+#endif
   _topology.SetGeomSubsets(geomSubsetsList);
 
   const TfToken subdivScheme = _topology.GetScheme();
@@ -491,8 +495,7 @@ void HdCyclesMesh::PopulateTopology(HdSceneDelegate *sceneDelegate)
     _geom->tag_smooth_modified();
   }
   else {
-    const HdSubdivisionTagsSchema subdivSchema = HdSubdivisionTagsSchema::GetFromParent(
-        prim.dataSource);
+    HdSubdivisionTagsSchema subdivSchema = HdSubdivisionTagsSchema::GetFromParent(prim.dataSource);
     PxOsdSubdivTags subdivTags;
     if (auto ds = subdivSchema.GetInterpolateBoundary()) {
       subdivTags.SetVertexInterpolationRule(ds->GetTypedValue(0.0f));

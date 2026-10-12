@@ -14,8 +14,8 @@
 #include "scene/scene.h"
 #include "util/hash.h"
 
+#include "hydra/usd_compat.h"
 #include <pxr/imaging/hd/materialBindingSchema.h>
-#include <pxr/imaging/hd/materialBindingsSchema.h>
 #include <pxr/imaging/hd/primvarsSchema.h>
 #include <pxr/imaging/hd/sceneDelegate.h>
 #include <pxr/imaging/hd/tokens.h>
@@ -220,7 +220,7 @@ void HdCyclesGeometry<Base, CyclesBase>::UpdateObjectSettings(
   uint visibility = Base::IsVisible() ? PATH_RAY_VISIBILITY_ALL : 0;
   std::vector<std::pair<const SocketType *, VtValue>> values;
 
-  const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(primDs);
+  HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(primDs);
   for (const TfToken &primvarName : PrimvarNamesAtInterpolation(primvars, HdInterpolationConstant))
   {
     if (!TfStringStartsWith(primvarName.GetString(), prefix)) {

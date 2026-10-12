@@ -5,6 +5,7 @@
 
 #include "hydra/camera.h"
 #include "hydra/session.h"
+#include "hydra/usd_compat.h"
 #include "hydra/util.h"
 #include "scene/camera.h"
 
@@ -63,7 +64,7 @@ void HdCyclesCamera::Sync(HdSceneDelegate *sceneDelegate,
   const HdSceneIndexPrim prim = GetPrim(sceneDelegate, id);
   const HdContainerDataSourceHandle &primDs = prim.dataSource;
 
-  HdCameraSchema cameraSchema = HdCameraSchema::GetFromParent(primDs);
+  HdCyclesCameraSchema cameraSchema = HdCameraSchema::GetFromParent(primDs);
   HdContainerDataSourceHandle cameraDs = cameraSchema.GetContainer();
 
   /* Read the shutter window from the camera prim so animated transforms can
