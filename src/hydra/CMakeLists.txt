@@ -190,8 +190,9 @@ if(WITH_CYCLES_HYDRA_RENDER_DELEGATE)
         PLUG_INFO_LIBRARY_PATH
         "${CYCLES_HYDRA_INSTALL_PATH}/usd_plugins/${HdCyclesPluginName}"
         "${CYCLES_HYDRA_INSTALL_PATH}/usd/${HdCyclesPluginName}${CMAKE_SHARED_LIBRARY_SUFFIX}")
+      # Relative to the plugin root, which is "usd_plugins/hdCycles" for Houdini.
       file(RELATIVE_PATH PLUG_INFO_RESOURCE_PATH
-        "${CYCLES_HYDRA_INSTALL_PATH}/${HdCyclesPluginName}"
+        "${CYCLES_HYDRA_INSTALL_PATH}/usd_plugins/${HdCyclesPluginName}"
         "${CYCLES_INSTALL_PATH}")
     else()
       file(RELATIVE_PATH
