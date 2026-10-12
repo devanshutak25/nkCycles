@@ -10,6 +10,7 @@ $HOUDINI_PATH/soho/parameters:
 
   HdCyclesPlugin_Global.ds    Cycles tab of the Render Settings LOP.
   HdCyclesPlugin_Viewport.ds  Cycles section of the viewport display options.
+  HdCyclesPlugin_Geometry.ds  Cycles tab of the Render Geometry Settings LOP (per object).
 
 Each parameter is a "cycles:..." render setting forwarded to the delegate.
 Types, defaults and menus come from the Cycles node sockets dumped to
@@ -332,6 +333,80 @@ TYPES = {
 }
 
 
+# Per-object settings, authored as constant primvars by the Render Geometry Settings LOP. The
+# delegate reads "cycles:object:visible_<ray>" as ray visibility and the others as the Cycles
+# object socket of the same name.
+GEOMETRY_SETTINGS = {
+    "primvars:cycles:object:visible_camera": {"type": "boolean", "default": True},
+    "primvars:cycles:object:visible_diffuse": {"type": "boolean", "default": True},
+    "primvars:cycles:object:visible_glossy": {"type": "boolean", "default": True},
+    "primvars:cycles:object:visible_transmission": {"type": "boolean", "default": True},
+    "primvars:cycles:object:visible_volume_scatter": {"type": "boolean", "default": True},
+    "primvars:cycles:object:visible_shadow": {"type": "boolean", "default": True},
+    "primvars:cycles:object:is_shadow_catcher": {"type": "boolean", "default": False},
+    "primvars:cycles:object:use_holdout": {"type": "boolean", "default": False},
+    "primvars:cycles:object:is_caustics_caster": {"type": "boolean", "default": False},
+    "primvars:cycles:object:is_caustics_receiver": {"type": "boolean", "default": False},
+    "primvars:cycles:object:shadow_terminator_geometry_offset": {"type": "float",
+                                                                 "default": 0.1},
+    "primvars:cycles:object:shadow_terminator_shading_offset": {"type": "float",
+                                                                "default": 0.0},
+    "primvars:cycles:object:ao_distance": {"type": "float", "default": 0.0},
+}
+
+# Layout of the per-object settings, following Blender's Cycles object Visibility panel.
+GEOMETRY_LAYOUT = [
+    P("Visibility", [
+        P("Ray Visibility", [
+            S("primvars:cycles:object:visible_camera", "Camera",
+              "Object visibility for camera rays."),
+            S("primvars:cycles:object:visible_diffuse", "Diffuse",
+              "Object visibility for diffuse reflection rays."),
+            S("primvars:cycles:object:visible_glossy", "Glossy",
+              "Object visibility for glossy reflection rays."),
+            S("primvars:cycles:object:visible_transmission", "Transmission",
+              "Object visibility for transmission rays."),
+            S("primvars:cycles:object:visible_volume_scatter", "Volume Scatter",
+              "Object visibility for volume scatter rays."),
+            S("primvars:cycles:object:visible_shadow", "Shadow",
+              "Object visibility for shadow rays."),
+        ], open=True),
+        P("Mask", [
+            S("primvars:cycles:object:is_shadow_catcher", "Shadow Catcher",
+              "Only render shadows and reflections on this object, for compositing renders "
+              "into real footage."),
+            S("primvars:cycles:object:use_holdout", "Holdout",
+              "Render a hole in the image with transparent alpha instead of the object."),
+        ], open=True),
+        P("Caustics", [
+            S("primvars:cycles:object:is_caustics_caster", "Cast Shadow Caustics",
+              "With Manifold Next Event Estimation, cast shadow caustics from refractive "
+              "surfaces onto caustics receivers."),
+            S("primvars:cycles:object:is_caustics_receiver", "Receive Shadow Caustics",
+              "With Manifold Next Event Estimation, receive shadow caustics from caustics "
+              "casters."),
+        ]),
+        P("Fast GI Approximation", [
+            S("primvars:cycles:object:ao_distance", "AO Distance",
+              "AO distance used for the Fast GI approximation (0 means use the world setting).",
+              range=(0, 10, True, False)),
+        ]),
+    ], open=True),
+    P("Shading", [
+        P("Shadow Terminator", [
+            S("primvars:cycles:object:shadow_terminator_geometry_offset", "Geometry Offset",
+              "Offset rays from the surface to reduce shadow terminator artifact on low poly "
+              "geometry. Only affects triangles at grazing angles to light.",
+              range=(0, 1, True, True)),
+            S("primvars:cycles:object:shadow_terminator_shading_offset", "Shading Offset",
+              "Push the shadow terminator towards the light to hide artifacts on low poly "
+              "geometry.",
+              range=(0, 1, True, True)),
+        ], open=True),
+    ]),
+]
+
+
 def settings(items=LAYOUT):
     """All settings in the layout, depth first."""
     for item in items:
@@ -370,7 +445,7 @@ def encode_condition(condition, encode):
     """Encode the setting names in a disable/hide condition as parameter names."""
     tokens = []
     for token in condition.split():
-        tokens.append(encode(token) if token.startswith("cycles:") else token)
+        tokens.append(encode(token) if token.startswith(("cycles:", "primvars:")) else token)
     return " ".join(tokens)
 
 
@@ -397,10 +472,11 @@ class Writer:
     (viewport display options) or "lop" (Cycles Render Settings LOP parameters, always authored).
     """
 
-    def __init__(self, sockets, mode, encode=encode_parm):
+    def __init__(self, sockets, mode, encode=encode_parm, layout=LAYOUT):
         self.sockets = sockets
         self.mode = mode
         self.encode = encode
+        self.layout = layout
         self.lines = []
 
     def include(self, setting):
@@ -520,7 +596,8 @@ class Writer:
             lines += [
                 "/// Automatically generated by rendersettings2ds.py, do not edit.",
                 "/// %s for the Cycles render delegate." % (
-                    "Viewport display options" if self.mode == "viewport" else "Render settings"),
+                    "Viewport display options" if self.mode == "viewport" else
+                    "Object settings" if self.layout is GEOMETRY_LAYOUT else "Render settings"),
                 "",
                 '#include "$HFS/houdini/soho/parameters/CommonMacros.ds"',
                 "",
@@ -530,7 +607,7 @@ class Writer:
                 '    parmtag { spare_opfilter "!!SHOP/PROPERTIES!!" }',
                 '    parmtag { spare_classtags "render" }',
             ]
-        for panel in LAYOUT:
+        for panel in self.layout:
             if self.has_settings(panel):
                 self.write_panel(panel, 1, [])
         lines += ["}", ""]
@@ -552,8 +629,10 @@ def main():
     sockets = load_sockets(args.json)
     os.makedirs(args.ds_install_dir, exist_ok=True)
 
-    for suffix, viewport in (("Global", False), ("Viewport", True)):
-        ds = generate(sockets, viewport)
+    for suffix, ds in (("Global", generate(sockets, False)),
+                       ("Viewport", generate(sockets, True)),
+                       ("Geometry", Writer(GEOMETRY_SETTINGS, "global",
+                                           layout=GEOMETRY_LAYOUT).generate())):
 
         # Validate by parsing the dialog script like Houdini does.
         group = hou.ParmTemplateGroup()

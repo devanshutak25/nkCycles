@@ -7,6 +7,7 @@
 #include "hydra/instancer.h"
 #include "hydra/material.h"
 #include "hydra/session.h"
+#include "hydra/node_util.h"
 #include "hydra/util.h"
 #include "scene/geometry.h"
 #include "scene/object.h"
@@ -15,6 +16,7 @@
 
 #include <pxr/imaging/hd/materialBindingSchema.h>
 #include <pxr/imaging/hd/materialBindingsSchema.h>
+#include <pxr/imaging/hd/primvarsSchema.h>
 #include <pxr/imaging/hd/sceneDelegate.h>
 #include <pxr/imaging/hd/tokens.h>
 #include <pxr/imaging/hd/xformSchema.h>
@@ -42,7 +44,7 @@ HdDirtyBits HdCyclesGeometry<Base, CyclesBase>::GetInitialDirtyBitsMask() const
 {
   return HdChangeTracker::DirtyPrimID | HdChangeTracker::DirtyTransform |
          HdChangeTracker::DirtyMaterialId | HdChangeTracker::DirtyVisibility |
-         HdChangeTracker::DirtyInstancer;
+         HdChangeTracker::DirtyInstancer | HdChangeTracker::DirtyPrimvar;
 }
 
 template<typename Base, typename CyclesBase>
@@ -165,10 +167,11 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
     }
   }
 
-  if (HdChangeTracker::IsVisibilityDirty(*dirtyBits, id)) {
-    for (Object *instance : _instances) {
-      instance->set_visibility(Base::IsVisible() ? PATH_RAY_VISIBILITY_ALL : 0);
-    }
+  if (HdChangeTracker::IsVisibilityDirty(*dirtyBits, id) ||
+      HdChangeTracker::IsInstancerDirty(*dirtyBits, id) ||
+      (*dirtyBits & HdChangeTracker::DirtyPrimvar))
+  {
+    UpdateObjectSettings(primDs);
   }
 
   // Must happen after material ID update, so that attribute decisions can be made
@@ -185,6 +188,78 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
   }
 
   *dirtyBits = HdChangeTracker::Clean;
+}
+
+template<typename Base, typename CyclesBase>
+void HdCyclesGeometry<Base, CyclesBase>::UpdateObjectSettings(
+    const HdContainerDataSourceHandle &primDs)
+{
+  // Per-object settings from constant "cycles:object:<setting>" primvars, like Blender's object
+  // Visibility panel. "visible_<ray>" hides the object from a ray type, the others set the
+  // Cycles object socket of the same name.
+  static const std::unordered_map<std::string, uint> rayVisibility = {
+      {"visible_camera", PATH_RAY_VISIBILITY_CAMERA},
+      {"visible_diffuse", PATH_RAY_VISIBILITY_DIFFUSE},
+      {"visible_glossy", PATH_RAY_VISIBILITY_GLOSSY},
+      {"visible_transmission", PATH_RAY_VISIBILITY_TRANSMIT},
+      {"visible_volume_scatter", PATH_RAY_VISIBILITY_VOLUME_SCATTER},
+      {"visible_shadow", PATH_RAY_VISIBILITY_SHADOW},
+  };
+  static const ustring objectSettings[] = {
+      ustring("is_shadow_catcher"),
+      ustring("use_holdout"),
+      ustring("is_caustics_caster"),
+      ustring("is_caustics_receiver"),
+      ustring("shadow_terminator_geometry_offset"),
+      ustring("shadow_terminator_shading_offset"),
+      ustring("ao_distance"),
+      ustring("lightgroup"),
+  };
+  static const std::string prefix = "cycles:object:";
+
+  uint visibility = Base::IsVisible() ? PATH_RAY_VISIBILITY_ALL : 0;
+  std::vector<std::pair<const SocketType *, VtValue>> values;
+
+  const HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(primDs);
+  for (const TfToken &primvarName : PrimvarNamesAtInterpolation(primvars, HdInterpolationConstant))
+  {
+    if (!TfStringStartsWith(primvarName.GetString(), prefix)) {
+      continue;
+    }
+    const std::string setting = primvarName.GetString().substr(prefix.size());
+    const VtValue value = ReadPrimvar(primvars, primvarName);
+
+    const auto ray = rayVisibility.find(setting);
+    if (ray != rayVisibility.end()) {
+      if (!VtValue::Cast<bool>(value).GetWithDefault(true)) {
+        visibility &= ~ray->second;
+      }
+      continue;
+    }
+
+    const ustring socketName(setting);
+    const bool known = std::find(std::begin(objectSettings), std::end(objectSettings),
+                                 socketName) != std::end(objectSettings);
+    const SocketType *socket = known ? Object::get_node_type()->find_input(socketName) : nullptr;
+    if (!socket) {
+      TF_WARN("Unknown Cycles object setting %s on %s",
+              primvarName.GetText(),
+              Base::GetId().GetText());
+      continue;
+    }
+    values.emplace_back(socket, value);
+  }
+
+  for (Object *instance : _instances) {
+    instance->set_visibility(visibility);
+    // Settings without a primvar go back to their default
+    for (const ustring &socketName : objectSettings) {
+      instance->set_default_value(*Object::get_node_type()->find_input(socketName));
+    }
+    for (const auto &[socket, value] : values) {
+      SetNodeValue(instance, *socket, value);
+    }
+  }
 }
 
 template<typename Base, typename CyclesBase>
