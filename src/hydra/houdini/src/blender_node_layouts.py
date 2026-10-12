@@ -6,16 +6,24 @@
 Dump the layout of Blender's Cycles shader nodes, to make the Houdini shader nodes look like them.
 
 Run inside Blender:
-    blender -b --factory-startup --python-exit-code 1 --python blender_node_layouts.py -- <out.json>
+    blender -b --factory-startup --python-exit-code 1 --python blender_node_layouts.py -- \
+        <out.json> <blender source>/source/blender/nodes/shader/nodes
 
 For every Blender shader node this writes the node label, the node properties (menus and options
 drawn on the node) and input sockets in the order Blender draws them, the panels they are in,
 their defaults, soft and hard ranges, and for every input the menu values for which Blender hides
 it. The output is keyed by Blender node type; shader2hda.py maps it to the Cycles nodes.
+
+The Python API only gives the generic range of a socket type (-10000 to 10000, or 0 to 1 for
+factors), not the min and max a node declares for its socket (IOR 1 to 1000). Those are read from
+the node declarations in the source of the same Blender version (the build hash is printed).
 """
 
 import itertools
 import json
+import math
+import os
+import re
 import sys
 
 import bpy
@@ -119,7 +127,7 @@ def property_info(node, prop):
     return info
 
 
-def socket_info(socket):
+def socket_info(node, socket, declared):
     info = {
         "kind": "input",
         "identifier": socket.identifier,
@@ -132,10 +140,91 @@ def socket_info(socket):
         info["default"] = to_json(socket.default_value)
         rna = socket.bl_rna.properties["default_value"]
         if hasattr(rna, "soft_min"):
-            info["soft_range"] = [rna.soft_min, rna.soft_max]
+            soft = [rna.soft_min, rna.soft_max]
+            decl = declared.get(node.bl_idname, {}).get(socket.identifier)
+            if decl:
+                soft = [soft[0] if decl[0] is None else decl[0],
+                        soft[1] if decl[1] is None else decl[1]]
+            info["soft_range"] = soft
             info["hard_range"] = [rna.hard_min, rna.hard_max]
             info["subtype"] = rna.subtype
     return info
+
+
+# Socket ranges from the node declarations.
+
+DECLARATION_CONSTANTS = {"FLT_MAX": 3.4028234663852886e+38, "INT_MAX": 2147483647.0,
+                         "M_PI": math.pi, "M_PI_2": math.pi / 2, "M_PI_4": math.pi / 4}
+
+
+def closing(text, start):
+    """Index of the bracket closing the one at start."""
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] in "({[":
+            depth += 1
+        elif text[i] in ")}]":
+            depth -= 1
+            if depth == 0:
+                return i
+    return len(text)
+
+
+def statement_end(text, start):
+    depth = 0
+    for i in range(start, len(text)):
+        if text[i] in "({[":
+            depth += 1
+        elif text[i] in ")}]":
+            depth -= 1
+        elif text[i] == ";" and depth == 0:
+            return i
+    return len(text)
+
+
+def declared_number(statement, method):
+    """Value of a .min(...) / .max(...) call in a socket declaration, or None."""
+    match = re.search(r"\." + method + r"\(", statement)
+    if not match:
+        return None
+    expr = statement[match.end():closing(statement, match.end() - 1)]
+    expr = re.sub(r"(\d(?:\.\d*)?(?:e[-+]?\d+)?)f\b", r"\1", expr)
+    expr = re.sub(r"\bfloat\(", "(", expr)
+    try:
+        return float(eval(expr, {"__builtins__": {}}, dict(DECLARATION_CONSTANTS)))
+    except Exception:
+        print("Warning: cannot evaluate .%s(%s)" % (method, expr))
+        return None
+
+
+def declared_ranges(source_dir):
+    """{node idname: {socket identifier: [min, max]}} from the shader node declarations."""
+    ranges = {}
+    for filename in sorted(os.listdir(source_dir)):
+        if not filename.endswith(".cc"):
+            continue
+        with open(os.path.join(source_dir, filename), encoding="utf-8") as f:
+            text = f.read()
+        declares = {}
+        for match in re.finditer(r"static void (\w+)\(NodeDeclarationBuilder &b\)\s*\{", text):
+            declares[match.group(1)] = text[match.end():closing(text, match.end() - 1)]
+        for match in re.finditer(r'node_type_base\(&ntype,\s*"(\w+)"', text):
+            declare = re.search(r"ntype\.declare\s*=\s*(?:\w+::)*(\w+);", text[match.end():])
+            if not declare or declare.group(1) not in declares:
+                continue
+            body = declares[declare.group(1)]
+            sockets = ranges.setdefault(match.group(1), {})
+            for socket in re.finditer(r"add_input<decl::(?:Float|Int)>\(", body):
+                statement = body[socket.start():statement_end(body, socket.start())]
+                head_start = socket.end() - socket.start() - 1
+                names = re.findall(r'"([^"]*)"', statement[head_start:closing(statement, head_start)])
+                if not names:
+                    continue
+                low = declared_number(statement, "min")
+                high = declared_number(statement, "max")
+                if low is not None or high is not None:
+                    sockets[names[-1]] = [low, high]
+    return ranges
 
 
 def availability(node, props, fixed):
@@ -175,7 +264,7 @@ def menu_values(node, prop):
     return values
 
 
-def dump_node(tree, idname, fixed):
+def dump_node(tree, idname, fixed, declared):
     node = tree.nodes.new(idname)
     initial = {p.identifier: getattr(node, p.identifier) for p in node_properties(node)}
     for key, value in fixed.items():
@@ -198,7 +287,7 @@ def dump_node(tree, idname, fixed):
     for socket in node.inputs:
         if not available[socket.identifier]:
             continue  # Never available, e.g. inputs only used by EEVEE.
-        info = socket_info(socket)
+        info = socket_info(node, socket, declared)
         reduced = reduce_conditions(hidden[socket.identifier], node, props, fixed)
         if reduced:
             info["hidden_when"] = reduced
@@ -268,7 +357,14 @@ def reduce_conditions(conditions, node, props, fixed):
 
 
 def main():
-    out_path = sys.argv[sys.argv.index("--") + 1]
+    args = sys.argv[sys.argv.index("--") + 1:]
+    if len(args) != 2:
+        raise SystemExit("Usage: blender ... --python blender_node_layouts.py -- <out.json> "
+                         "<blender source>/source/blender/nodes/shader/nodes")
+    out_path, source_dir = args
+    print("Blender %s, build hash %s: use the node source of this commit" %
+          (bpy.app.version_string, bpy.app.build_hash.decode()))
+    declared = declared_ranges(source_dir)
     bpy.context.scene.render.engine = "CYCLES"
     material = bpy.data.materials.new("layouts")
     material.use_nodes = True
@@ -285,8 +381,8 @@ def main():
             tree.nodes.remove(tree.nodes.new(name))
         except RuntimeError:
             continue  # Not available in shader node trees.
-        nodes[name] = dump_node(tree, name, {})
-    variants = {cycles: dump_node(tree, idname, fixed)
+        nodes[name] = dump_node(tree, name, {}, declared)
+    variants = {cycles: dump_node(tree, idname, fixed, declared)
                 for cycles, (idname, fixed) in VARIANTS.items()}
 
     with open(out_path, "w", newline="\n") as f:

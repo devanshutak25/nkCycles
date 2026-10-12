@@ -103,8 +103,8 @@
      "kind": "input",
      "label": "Distance",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -254,8 +254,8 @@
      "kind": "input",
      "label": "Strength",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -303,8 +303,8 @@
      "kind": "input",
      "label": "Radius",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -358,8 +358,8 @@
      "kind": "input",
      "label": "Temperature",
      "soft_range": [
-      -10000.0,
-      10000.0
+      800.0,
+      12000.0
      ],
      "subtype": "COLOR_TEMPERATURE",
      "type": "VALUE"
@@ -414,8 +414,8 @@
      "kind": "input",
      "label": "Brightness",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -100.0,
+      100.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -432,8 +432,8 @@
      "kind": "input",
      "label": "Contrast",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -100.0,
+      100.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -536,8 +536,8 @@
      "kind": "input",
      "label": "Anisotropy",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -1.0,
+      1.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -775,8 +775,8 @@
      "kind": "input",
      "label": "IOR",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -816,8 +816,8 @@
      "label": "Thin Film Thickness",
      "panel": "Thin Film",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      100000.0
      ],
      "subtype": "WAVELENGTH",
      "type": "VALUE"
@@ -835,8 +835,8 @@
      "label": "Thin Film IOR",
      "panel": "Thin Film",
      "soft_range": [
-      -10000.0,
-      10000.0
+      1.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -913,8 +913,8 @@
      "kind": "input",
      "label": "Offset",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -1.5707963267948966,
+      1.5707963267948966
      ],
      "subtype": "ANGLE",
      "type": "VALUE"
@@ -1280,8 +1280,8 @@
      "kind": "input",
      "label": "IOR",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -1298,8 +1298,8 @@
      "kind": "input",
      "label": "Offset",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -1.5707963267948966,
+      1.5707963267948966
      ],
      "subtype": "ANGLE",
      "type": "VALUE"
@@ -1716,8 +1716,8 @@
      "label": "Thin Film Thickness",
      "panel": "Thin Film",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      100000.0
      ],
      "subtype": "WAVELENGTH",
      "type": "VALUE"
@@ -1735,8 +1735,8 @@
      "label": "Thin Film IOR",
      "panel": "Thin Film",
      "soft_range": [
-      -10000.0,
-      10000.0
+      1.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -1829,8 +1829,8 @@
      "kind": "input",
      "label": "IOR",
      "soft_range": [
-      -10000.0,
-      10000.0
+      1.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -1989,8 +1989,8 @@
      "label": "Subsurface Scale",
      "panel": "Subsurface",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      10.0
      ],
      "subtype": "DISTANCE",
      "type": "VALUE"
@@ -2019,8 +2019,8 @@
      "label": "Subsurface IOR",
      "panel": "Subsurface",
      "soft_range": [
-      0.0,
-      1.0
+      1.01,
+      3.8
      ],
      "subtype": "FACTOR",
      "type": "VALUE"
@@ -2038,7 +2038,7 @@
      "label": "Subsurface Anisotropy",
      "panel": "Subsurface",
      "soft_range": [
-      0.0,
+      -1.0,
       1.0
      ],
      "subtype": "FACTOR",
@@ -2239,8 +2239,8 @@
      "label": "Coat IOR",
      "panel": "Coat",
      "soft_range": [
-      -10000.0,
-      10000.0
+      1.0,
+      4.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -2391,8 +2391,8 @@
      "label": "Emission Strength",
      "panel": "Emission",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -2410,8 +2410,8 @@
      "label": "Thin Film Thickness",
      "panel": "Thin Film",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      100000.0
      ],
      "subtype": "WAVELENGTH",
      "type": "VALUE"
@@ -2429,8 +2429,8 @@
      "label": "Thin Film IOR",
      "panel": "Thin Film",
      "soft_range": [
-      -10000.0,
-      10000.0
+      1.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -2614,8 +2614,8 @@
      "kind": "input",
      "label": "IOR",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -3007,8 +3007,8 @@
      "kind": "input",
      "label": "Distance",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -3025,8 +3025,8 @@
      "kind": "input",
      "label": "Filter Width",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.001,
+      10.0
      ],
      "subtype": "PIXEL",
      "type": "VALUE"
@@ -3043,8 +3043,8 @@
      "kind": "input",
      "label": "Height",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -1000.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -3369,8 +3369,8 @@
      "kind": "input",
      "label": "Height",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -3387,8 +3387,8 @@
      "kind": "input",
      "label": "Midlevel",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -3405,8 +3405,8 @@
      "kind": "input",
      "label": "Scale",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -3683,8 +3683,8 @@
      "kind": "input",
      "label": "Strength",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -3767,8 +3767,8 @@
      "kind": "input",
      "label": "IOR",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -3845,8 +3845,8 @@
      "kind": "input",
      "label": "Gamma",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.001,
+      10.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -3931,8 +3931,8 @@
      "kind": "input",
      "label": "Hue",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -3949,8 +3949,8 @@
      "kind": "input",
      "label": "Saturation",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      2.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -3967,8 +3967,8 @@
      "kind": "input",
      "label": "Value",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      2.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -4097,8 +4097,8 @@
      "kind": "input",
      "label": "Blend",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -4157,8 +4157,8 @@
      "kind": "input",
      "label": "Strength",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -4175,8 +4175,8 @@
      "kind": "input",
      "label": "Smooth",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -6184,8 +6184,8 @@
      "kind": "input",
      "label": "Strength",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      10.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -6310,8 +6310,8 @@
      "kind": "input",
      "label": "Value",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -6861,8 +6861,8 @@
      "kind": "input",
      "label": "Sides",
      "soft_range": [
-      -10000.0,
-      10000.0
+      2.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -7176,8 +7176,8 @@
      "kind": "input",
      "label": "Value",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -100.0,
+      100.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -7194,8 +7194,8 @@
      "kind": "input",
      "label": "Width",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -100.0,
+      100.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -7212,8 +7212,8 @@
      "kind": "input",
      "label": "Center",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -100.0,
+      100.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -7298,8 +7298,8 @@
      "kind": "input",
      "label": "Scale",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -7343,8 +7343,8 @@
      "kind": "input",
      "label": "IOR",
      "soft_range": [
-      0.0,
-      1.0
+      1.01,
+      3.8
      ],
      "subtype": "FACTOR",
      "type": "VALUE"
@@ -7392,7 +7392,7 @@
      "kind": "input",
      "label": "Anisotropy",
      "soft_range": [
-      0.0,
+      -1.0,
       1.0
      ],
      "subtype": "FACTOR",
@@ -7670,8 +7670,8 @@
      "kind": "input",
      "label": "Scale",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -1000.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -7688,8 +7688,8 @@
      "kind": "input",
      "label": "Mortar Size",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      0.125
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -7706,8 +7706,8 @@
      "kind": "input",
      "label": "Mortar Smooth",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -7724,8 +7724,8 @@
      "kind": "input",
      "label": "Bias",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -1.0,
+      1.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -7742,8 +7742,8 @@
      "kind": "input",
      "label": "Brick Width",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.01,
+      100.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -7760,8 +7760,8 @@
      "kind": "input",
      "label": "Row Height",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.01,
+      100.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -8104,7 +8104,7 @@
      "kind": "input",
      "label": "Frequency",
      "soft_range": [
-      -10000.0,
+      0.0,
       10000.0
      ],
      "subtype": "NONE",
@@ -8324,8 +8324,8 @@
      "kind": "input",
      "label": "Strength",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -8543,8 +8543,8 @@
      "kind": "input",
      "label": "Scale",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -1000.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -8561,8 +8561,8 @@
      "kind": "input",
      "label": "Distortion",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -1000.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -8707,8 +8707,8 @@
      "kind": "input",
      "label": "W",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -1000.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -8725,8 +8725,8 @@
      "kind": "input",
      "label": "Scale",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -1000.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -8743,8 +8743,8 @@
      "kind": "input",
      "label": "Detail",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      15.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -8779,8 +8779,8 @@
      "kind": "input",
      "label": "Lacunarity",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -8805,8 +8805,8 @@
      "kind": "input",
      "label": "Offset",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -1000.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -8834,8 +8834,8 @@
      "kind": "input",
      "label": "Gain",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -8852,8 +8852,8 @@
      "kind": "input",
      "label": "Distortion",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -1000.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -9291,8 +9291,8 @@
      "kind": "input",
      "label": "W",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -1000.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -9309,8 +9309,8 @@
      "kind": "input",
      "label": "Scale",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -1000.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -9332,8 +9332,8 @@
      "kind": "input",
      "label": "Detail",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      15.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -9378,8 +9378,8 @@
      "kind": "input",
      "label": "Lacunarity",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -9785,8 +9785,8 @@
      "kind": "input",
      "label": "Exponent",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      32.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -9973,8 +9973,8 @@
      "kind": "input",
      "label": "Scale",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -1000.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -9991,8 +9991,8 @@
      "kind": "input",
      "label": "Distortion",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -1000.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -10009,8 +10009,8 @@
      "kind": "input",
      "label": "Detail",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      15.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -10027,8 +10027,8 @@
      "kind": "input",
      "label": "Detail Scale",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -1000.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -10063,8 +10063,8 @@
      "kind": "input",
      "label": "Phase Offset",
      "soft_range": [
-      -10000.0,
-      10000.0
+      -1000.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -10413,8 +10413,8 @@
      "kind": "input",
      "label": "Midlevel",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -10431,8 +10431,8 @@
      "kind": "input",
      "label": "Scale",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -11290,8 +11290,8 @@
      "kind": "input",
      "label": "Density",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -11417,7 +11417,7 @@
      "label": "Anisotropy",
      "panel": "Scatter",
      "soft_range": [
-      0.0,
+      -1.0,
       1.0
      ],
      "subtype": "FACTOR",
@@ -11450,8 +11450,8 @@
      "label": "IOR",
      "panel": "Scatter",
      "soft_range": [
-      0.0,
-      1.0
+      1.0,
+      2.0
      ],
      "subtype": "FACTOR",
      "type": "VALUE"
@@ -11484,7 +11484,7 @@
      "panel": "Scatter",
      "soft_range": [
       0.0,
-      1.0
+      0.5
      ],
      "subtype": "FACTOR",
      "type": "VALUE"
@@ -11516,8 +11516,8 @@
      "label": "Alpha",
      "panel": "Scatter",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      500.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -11549,8 +11549,8 @@
      "label": "Diameter",
      "panel": "Scatter",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      50.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -11670,8 +11670,8 @@
      "kind": "input",
      "label": "Density",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -11697,7 +11697,7 @@
      "kind": "input",
      "label": "Anisotropy",
      "soft_range": [
-      0.0,
+      -1.0,
       1.0
      ],
      "subtype": "FACTOR",
@@ -11738,8 +11738,8 @@
      "kind": "input",
      "label": "Emission Strength",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -11820,8 +11820,8 @@
      "kind": "input",
      "label": "Temperature",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      6500.0
      ],
      "subtype": "COLOR_TEMPERATURE",
      "type": "VALUE"
@@ -11920,8 +11920,8 @@
      "kind": "input",
      "label": "Density",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      1000.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -11949,7 +11949,7 @@
      "kind": "input",
      "label": "Anisotropy",
      "soft_range": [
-      0.0,
+      -1.0,
       1.0
      ],
      "subtype": "FACTOR",
@@ -11981,8 +11981,8 @@
      "kind": "input",
      "label": "IOR",
      "soft_range": [
-      0.0,
-      1.0
+      1.0,
+      2.0
      ],
      "subtype": "FACTOR",
      "type": "VALUE"
@@ -12014,7 +12014,7 @@
      "label": "Backscatter",
      "soft_range": [
       0.0,
-      1.0
+      0.5
      ],
      "subtype": "FACTOR",
      "type": "VALUE"
@@ -12045,8 +12045,8 @@
      "kind": "input",
      "label": "Alpha",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      500.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -12077,8 +12077,8 @@
      "kind": "input",
      "label": "Diameter",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      50.0
      ],
      "subtype": "NONE",
      "type": "VALUE"
@@ -12110,8 +12110,8 @@
      "kind": "input",
      "label": "Wavelength",
      "soft_range": [
-      -10000.0,
-      10000.0
+      380.0,
+      780.0
      ],
      "subtype": "WAVELENGTH",
      "type": "VALUE"
@@ -12151,8 +12151,8 @@
      "kind": "input",
      "label": "Size",
      "soft_range": [
-      -10000.0,
-      10000.0
+      0.0,
+      100.0
      ],
      "subtype": "NONE",
      "type": "VALUE"

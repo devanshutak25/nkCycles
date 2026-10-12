@@ -192,8 +192,43 @@ def convert_default(socket, value, token_of):
     return None
 
 
-def ui_range(item, socket):
-    """(min, max, min_strict, max_strict) for the parameter slider, or None."""
+# Blender's declared limits at or beyond this mean "no limit" (-1000 to 1000 for texture
+# coordinates, -10000 to 10000 for generic values).
+NO_LIMIT = 1000.0
+# A range is too wide for a Houdini slider when it spans this many times the default value.
+WIDE_RANGE = 50.0
+# Slider end for wide IOR ranges (IOR 1 to 1000 in Blender).
+IOR_SLIDER_MAX = 3.0
+
+# Slider ranges (min, max, min_strict, max_strict) where Blender's range does not fit: angles
+# that Blender wraps instead of limiting, AOV values that are often outside 0 to 1, and thin film
+# thicknesses in nanometers.
+RANGE_OVERRIDES = {
+    "*": {"thin_film_thickness": (0.0, 1000.0, True, False)},
+    "aov_output": {"value": (0.0, 1.0, False, False)},
+    "sky_texture": {"sun_elevation": (-math.pi / 2, math.pi / 2, False, False),
+                    "sun_rotation": (0.0, 2.0 * math.pi, False, False)},
+    "vector_rotate": {"angle": (-math.pi, math.pi, False, False)},
+    "gabor_texture": {"orientation_2d": (0.0, math.pi, False, False)},
+}
+
+
+def ceil_power_of_ten(value):
+    return 10.0 ** math.ceil(math.log10(value) - 1e-6)
+
+
+def ui_range(cycles_node, item, socket):
+    """(min, max, min_strict, max_strict) for the parameter slider, or None.
+
+    Sockets use the min and max their node declares, node properties their soft range. Houdini
+    has one range for both the slider and the clamp, while Blender drags without a slider, so
+    ranges far wider than the default value (IOR 1 to 1000, Strength 0 to 1000000) get a
+    practical slider that can be typed beyond, and only limits that are real ones (Roughness 0
+    to 1, IOR >= 1) are strict.
+    """
+    override = RANGE_OVERRIDES.get(cycles_node, {}).get(socket["name"]) or         RANGE_OVERRIDES["*"].get(socket["name"])
+    if override:
+        return override
     soft = item.get("soft_range")
     hard = item.get("hard_range")
     if not soft or socket["type"] not in ("float", "int", "uint"):
@@ -202,8 +237,32 @@ def ui_range(item, socket):
     if not (math.isfinite(low) and math.isfinite(high)) or abs(low) > MAX_RANGE or \
        abs(high) > MAX_RANGE:
         return None
-    low_strict = bool(hard) and hard[0] == low
-    high_strict = bool(hard) and hard[1] == high
+    if item.get("kind") == "property":
+        low_strict = bool(hard) and hard[0] == low
+        high_strict = bool(hard) and hard[1] == high
+    else:
+        low_strict = abs(low) < NO_LIMIT
+        high_strict = abs(high) < NO_LIMIT
+
+    default = item.get("default")
+    if not isinstance(default, (int, float)) or isinstance(default, bool):
+        default = 0.0
+    scale = max(abs(default), 1.0)
+    if high - low > WIDE_RANGE * scale:
+        if "IOR" in item.get("label", "") and default >= 1.0:
+            wide_high = IOR_SLIDER_MAX
+        else:
+            wide_high = max(ceil_power_of_ten(2.0 * abs(default)), 1.0) if default else 1.0
+        if low < 0.0:
+            # Signed values centered on zero keep a symmetric slider, others start at zero.
+            wide_low = -wide_high if default == 0.0 and -low >= wide_high else 0.0
+            if default < 0.0:
+                wide_low = max(low, -wide_high)
+            low, low_strict = wide_low, False
+        if wide_high < high:
+            high, high_strict = wide_high, False
+    if socket["type"] != "float":
+        low, high = int(math.floor(low)), int(math.ceil(high))
     return (low, high, low_strict, high_strict)
 
 
@@ -277,7 +336,7 @@ def node_layout(cycles_node, layouts, problems):
             if default is None:
                 default = socket.get("default")
             param = add(socket, label=item["label"], default=default, menu=menu,
-                        range=ui_range(item, socket), panel=item.get("panel"),
+                        range=ui_range(name, item, socket), panel=item.get("panel"),
                         help=item.get("description", ""))
             mapped.append((param, item))
 
