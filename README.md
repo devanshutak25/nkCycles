@@ -8,9 +8,8 @@ Blender, and Blender-style render settings.
 This is a fork of [cjhosken/hdCycles](https://projects.blender.org/cjhosken/hdCycles) (itself based on Blender's
 Cycles repository). The work for Houdini 22 lives on the `houdini-22` branch.
 
-> **Status: work in progress.** Daily lookdev with Cycles shaders, USD lights and VDB volumes works. Most AOVs,
-> native Houdini volumes, implicit USD shapes and Karma/MaterialX materials do **not** work yet; see
-> [Known issues](#known-issues).
+> **Status: work in progress.** Daily lookdev with Cycles shaders, USD lights, volumes, AOVs and per-object
+> settings works. Karma/MaterialX materials and OSL do **not** work yet; see [Known issues](#known-issues).
 
 ## Tested with
 
@@ -37,33 +36,34 @@ Linux and macOS builds have not been tested on Houdini 22.
 | Viewport | Free view and looking through a camera |
 | Stability | No crash on quit, renderer switch or device change |
 | Units | Stages with `metersPerUnit` 1 and 0.01 |
-| Volumes | VDB files and VDB volumes made in SOPs inside a LOP stage; volumes without a material show their density |
+| Volumes | VDB files, `.bgeo` volumes, and VDB or native Houdini volumes made in SOPs inside a LOP stage; volumes without a material show their density |
+| Geometry | Meshes, curves, points, and implicit USD shapes (Sphere, Cube, Cone, Cylinder, Capsule, Plane) as meshes |
+| AOVs | Any Cycles pass as a render var (`diffuse_direct`, `glossy_color`, `emission`, `ao`, `position`, `uv`, `mist`, `roughness`, ...) and shader AOVs from the AOV Output node |
+| Per-object settings | Ray visibility, shadow catcher, holdout, shadow caustics, shadow terminator, AO distance: Cycles tab of the Render Geometry Settings LOP |
+| Tab menu | Cycles nodes grouped like Blender's Add menu (Input, Output, Shader, Displacement, Color, Texture, Utilities/Math, Utilities/Vector) |
 
 ## Known issues
 
 ### Rendering
-- **Native Houdini volumes** (not VDB) don't render yet; convert them with a Convert VDB SOP.
-- **Only 5 AOVs work:** color, depth, normal, primId, instanceId. Light passes (diffuse/glossy/transmission,
-  emission, environment, AO, shadow), data passes (position, UV, vector, mist, ...), cryptomatte, shader AOVs
-  and light path expressions are missing, and there is no AOV UI yet.
-- **Implicit USD shapes don't render** (Sphere, Cube, Cone, Cylinder, Capsule). Convert them to meshes for now.
+- **AOVs:** cryptomatte, light path expressions and primvar AOVs are not supported, and there is no AOV UI yet
+  (author render vars by hand: `sourceName` = Cycles pass name). An AOV Output node only reaches the render when
+  the material connects it to an output (e.g. `outputs:cycles:aov`); the Cycles Material Builder has no such
+  output yet.
 - **Karma / MaterialX materials are not translated.** Use the Cycles Material Builder.
 - **OSL** is not available in Houdini builds.
 - The Principled Hair BSDF needs a recheck of OptiX vs CPU output.
 
 ### Viewport
-- The camera sometimes jumps very far from the origin while orbiting. Likely cause: the `depth` AOV carries
-  Cycles' camera distance instead of the normalized depth Houdini expects.
+- The camera sometimes jumps very far from the origin while orbiting. The `depth` AOV is now the 0..1 window
+  depth Hydra expects (it was Cycles' camera distance), which was the most likely cause; not confirmed yet.
 
 ### UI
 - Port locations are wrong on some shader nodes.
-- The Cycles entries in the Tab menu are not grouped into sub-menus like Blender's Add menu.
 - The Cycles Render Settings LOP needs UX touch-ups.
-- Some shader node defaults are raw Cycles defaults (e.g. Checker is black on black).
 - Color Ramp and the curve nodes expose raw arrays instead of Houdini ramp parameters; angles are in radians.
 
 ### Missing features
-- Per-object and per-light settings (visibility, shadow catcher, holdout, ...).
+- Per-light settings (Cycles light options such as cast shadow, MIS, max bounces).
 - Motion blur, sample subset and the Fast GI method menu are not exposed.
 - Viewport resolution divider (the viewport always renders at full resolution).
 - HIP (AMD) and oneAPI (Intel) devices are disabled; NVIDIA and CPU only.
@@ -72,14 +72,12 @@ Linux and macOS builds have not been tested on Houdini 22.
 
 Roughly in this order:
 
-1. Fix the orbit jump (depth AOV).
-2. Native Houdini volumes.
-3. Shader node ports, Tab menu sub-menus, Render Settings LOP touch-ups, node defaults, ramps and degrees.
-4. AOVs: Cycles passes, cryptomatte, shader AOVs, an AOV UI, multi-AOV EXR output from husk.
-5. Implicit USD shapes.
-6. Per-object / per-light settings.
-7. MaterialX / Karma material translation.
-8. OSL.
+1. Confirm the orbit jump is gone.
+2. Shader node ports, Render Settings LOP touch-ups, ramps and degrees.
+3. AOVs: cryptomatte, an AOV UI, AOV outputs in the Cycles Material Builder.
+4. Per-light settings, motion blur.
+5. MaterialX / Karma material translation.
+6. OSL.
 
 ## Building
 
@@ -152,6 +150,9 @@ node generator is ported from that repository's `shaders` branch, by Christopher
 | **Frozen, squashed viewport image when looking through a camera.** Houdini binds buffers the size of the viewer but sets the viewport to the camera gate. The delegate now renders at the buffer size and conforms the camera aspect. | `ac7c0f2fc` |
 | **Volumes without a material rendered nothing** (they got the default surface shader). They now get Cycles' default volume shader, which shows the density like Karma. | `2b69b0a9a` |
 | **Volumes made in SOPs failed to load** ("could not open file op:/stage/..."). Houdini passes these as `op:` paths, not files. The delegate now gets the grids from Houdini through `USD_SopVol` (`SOPgetVDBVolumePrimitive`), sharing them instead of copying. This needs the Houdini SDK headers and `libGEO`/`libUT`/`libCE`, so it is only built for Houdini (`houdini_volume.cpp`). | `0c125583d` |
+| **Native Houdini volumes did not render** (`houdiniFieldAsset`, from SOPs or `.bgeo` files). They come from `SOPgetHoudiniVolumePrimitive` and are converted to OpenVDB grids with `GU_PrimVDB::buildFromPrimVolume` (links `libGT`/`libGU` too). | `4a3b4831e` |
+| **Implicit USD shapes did not render** (Sphere, Cube, Cone, Cylinder, Capsule, Plane). A scene index plugin applies `HdsiImplicitSurfaceSceneIndex` for Cycles, like Storm and hdPrman. | `df65e282f` |
+| **The depth AOV was camera distance in meters** (1e10 for background) instead of Hydra's 0..1 window depth, which the Houdini viewport uses to composite guides. It is converted with the camera projection in the viewport (`houdini:viewport`); husk renders keep the distance. | `14fb1d2c8` |
 
 ### Render delegate features
 
@@ -161,6 +162,8 @@ node generator is ported from that repository's `shaders` branch, by Christopher
 | Film and background render settings (`cycles:film:*`, `cycles:background:*`: exposure, pixel filter, transparent background). An explicit transparency setting now overrides the automatic one. | `ff9948176` |
 | Changing the device or thread count restarts the delegate. | `16f63cd20` |
 | `shader_defaults.json` in the resource directory overrides Cycles socket defaults per node type. Houdini only writes parameters that differ from the UI default, so the delegate must use the same defaults as the UI. | `2595a4dd6` |
+| **AOVs:** render vars can name any Cycles pass, with a default format from the pass; other names are shader AOVs written by AOV Output nodes. Extra material terminals (e.g. `outputs:cycles:aov`) pull AOV Output nodes into the network. | `49debc368` |
+| **Per-object settings** from constant `cycles:object:<setting>` primvars: `visible_camera`/`_diffuse`/`_glossy`/`_transmission`/`_volume_scatter`/`_shadow`, `is_shadow_catcher`, `use_holdout`, shadow caustics, shadow terminator offsets, `ao_distance`. | `30aa47d9d` |
 
 ### Houdini user interface
 
@@ -171,6 +174,8 @@ node generator is ported from that repository's `shaders` branch, by Christopher
 | **Slider ranges from Blender's node declarations,** read from the Blender source because the Python API only gives generic ranges. Fixes sliders from −10000 to 10000, and IOR inputs that were clamped below their defaults. | `702fd2b44` |
 | **Cycles tab on the Render Settings LOP and in the viewport display options,** laid out like Blender's render properties: Sampling, Denoise, Path Guiding, Light Paths, Clamping, Caustics, Fast GI, Volumes, Film, Performance. Generated from the delegate's own settings, so defaults and menus always match. | `16f63cd20`, `de6ced211` |
 | **Cycles Render Settings LOP:** one node that creates the render settings, product and var prims with every Cycles setting authored, like Karma's. | `8abcbdb5f` |
+| **Tab menu sub-menus like Blender's Add menu,** parsed from Blender's `node_add_menu_shader.py`. | `f400ddc23` |
+| **Cycles tab on the Render Geometry Settings LOP** (`HdCyclesPlugin_Geometry.ds`) for the per-object settings, laid out like Blender's object Visibility panel. | `30aa47d9d` |
 
 ### Documentation
 
@@ -191,13 +196,14 @@ src/hydra/houdini/
   src/shader2hda.py                 builds the shader node HDAs
   src/blender_node_layouts.py       runs in Blender, dumps node layouts (+ ranges from Blender source)
   src/blender_layout.py             maps Blender layouts onto Cycles nodes
-  src/rendersettings2ds.py          Cycles tab + viewport options (.ds)
+  src/rendersettings2ds.py          Cycles tabs (render settings, geometry) + viewport options (.ds)
   src/cyclesrendersettings2hda.py   Cycles Render Settings LOP
 ```
 
-New Houdini-only source: `src/hydra/houdini_volume.{h,cpp}` (volumes from SOPs).
+New Houdini-only source: `src/hydra/houdini_volume.{h,cpp}` (volumes from SOPs and native Houdini volumes).
 
-Modified upstream files: `src/hydra/{camera,display_driver,field,geometry.inl,light,material,render_delegate,render_pass,session}`,
+Modified upstream files: `src/hydra/{camera,display_driver,field,geometry,light,material,output_driver,plugin,render_delegate,render_pass,session,volume}`,
+`src/hydra/resources/plugInfo.json`,
 `src/hydra/CMakeLists.txt`, `src/cmake/external_libs.cmake`, `src/cmake/Modules/FindUSDHoudini.cmake`,
 `src/scene/shader_nodes.cpp`, `BUILDING.md`, `README.md`.
 
