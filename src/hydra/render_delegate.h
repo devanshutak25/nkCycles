@@ -26,6 +26,10 @@ HDCYCLES_NAMESPACE_OPEN_SCOPE
 
 TF_DECLARE_PUBLIC_TOKENS(HdCyclesRenderSettingsTokens, HD_CYCLES_RENDER_SETTINGS_TOKENS);
 
+/* Session parameters (device, threads) from render settings, for hosts creating their own
+ * session. */
+CCL_NS::SessionParams GetSessionParams(const PXR_NS::HdRenderSettingsMap &settings);
+
 class HdCyclesDelegate final : public PXR_NS::HdRenderDelegate {
  public:
   HdCyclesDelegate(const PXR_NS::HdRenderSettingsMap &settingsMap,

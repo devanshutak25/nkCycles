@@ -108,6 +108,8 @@ Node *FindSettingNode(Scene *scene, const std::string &key, ustring &socketName)
   return nullptr;
 }
 
+}  // namespace
+
 SessionParams GetSessionParams(const HdRenderSettingsMap &settings)
 {
   SessionParams params;
@@ -179,8 +181,6 @@ SessionParams GetSessionParams(const HdRenderSettingsMap &settings)
 
   return params;
 }
-
-}  // namespace
 
 HdCyclesDelegate::HdCyclesDelegate(const HdRenderSettingsMap &settingsMap,
                                    Session *session_,

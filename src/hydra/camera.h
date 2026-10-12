@@ -36,6 +36,12 @@ class HdCyclesCamera final : public PXR_NS::HdCamera {
                                   CCL_NS::Camera *cam,
                                   float aspectRatio = 0.0f);
 
+  /* Override how the camera window is conformed to the image aspect ratio. */
+  void SetWindowPolicy(const PXR_NS::CameraUtilConformWindowPolicy windowPolicy)
+  {
+    _windowPolicy = windowPolicy;
+  }
+
   PXR_NS::HdDirtyBits GetInitialDirtyBitsMask() const override;
 
   void Sync(PXR_NS::HdSceneDelegate *sceneDelegate,
