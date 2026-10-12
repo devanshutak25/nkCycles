@@ -7,16 +7,22 @@
  * queries the NodeType registry for all registered shader nodes,
  * and writes a JSON description to shader_nodes.json.
  *
+ * The sockets of the integrator, film and background nodes are written to
+ * render_settings.json, to generate the render settings UI from.
+ *
  * Build (from build/):
  *   cmake --build . --target shaders_node_dump
  *
  * Or compile manually linking against cycles libraries.
  *
  * Usage: ./shaders_node_dump
- * Output: shader_nodes.json (in the current working directory)
+ * Output: shader_nodes.json, render_settings.json (in the current working directory)
  */
 
 #include "graph/node_type.h"
+#include "scene/background.h"
+#include "scene/film.h"
+#include "scene/integrator.h"
 #include "scene/shader_nodes.h"
 #include "graph/node_enum.h"
 #include "util/log.h"
@@ -34,6 +40,7 @@
 CCL_NAMESPACE_BEGIN
 
 static const char *OUTPUT_PATH = "shader_nodes.json";
+static const char *SETTINGS_OUTPUT_PATH = "render_settings.json";
 
 /* ------------------------------------------------------------------ */
 /* JSON helpers                                                        */
@@ -286,6 +293,143 @@ static std::string enum_default_token(const NodeEnum *enum_values, int int_defau
 /* Main                                                                */
 /* ------------------------------------------------------------------ */
 
+/* Write the description of a node type and its sockets as a JSON object. */
+static void write_node(std::ostream &out, const NodeType *nt)
+{
+  std::string node_name = nt->name.c_str();
+  std::string label = title_case(node_name);
+
+  out << "    {\n";
+  out << "      \"name\": \"" << json_escape(node_name) << "\",\n";
+  out << "      \"label\": \"" << json_escape(label) << "\",\n";
+
+  /* Inputs */
+  out << "      \"inputs\": [\n";
+  bool first_input = true;
+  for (const SocketType &socket : nt->inputs) {
+    /* Skip internal sockets */
+    if (socket.flags & SocketType::SVM_INTERNAL)
+      continue;
+    if (socket.flags & SocketType::OSL_INTERNAL)
+      continue;
+
+    std::string type_str = socket_type_str(socket.type);
+    std::string sname = socket.name.c_str();
+    std::string sui_name = socket.ui_name.c_str();
+    if (sui_name.empty())
+      sui_name = sname;
+
+    if (!first_input)
+      out << ",\n";
+    first_input = false;
+
+    out << "        {\n";
+    out << "          \"name\": \"" << json_escape(sname) << "\",\n";
+    out << "          \"type\": \"" << json_escape(type_str) << "\",\n";
+    out << "          \"ui_name\": \"" << json_escape(sui_name) << "\"";
+
+    /* Default value */
+    if (socket.type == SocketType::ENUM) {
+      /* For enums, extract the int default and reverse-map to token */
+      if (socket.default_value) {
+        int int_default = *(const int *)socket.default_value;
+        std::string token = enum_default_token(socket.enum_values, int_default);
+        out << ",\n          \"default\": " << token;
+      }
+    }
+    else {
+      std::string def = extract_default(socket);
+      if (!def.empty()) {
+        out << ",\n          \"default\": " << def;
+      }
+    }
+
+    /* Enum values */
+    if (socket.type == SocketType::ENUM && socket.enum_values) {
+      out << ",\n          \"enum_values\": {";
+      bool first_ev = true;
+      for (auto it = socket.enum_values->begin(); it != socket.enum_values->end(); ++it) {
+        if (!first_ev)
+          out << ", ";
+        first_ev = false;
+        std::string token = it->first.c_str();
+        std::string display = title_case(token);
+        out << "\"" << json_escape(token) << "\": \"" << json_escape(display) << "\"";
+      }
+      out << "}";
+    }
+
+    /* Min/max range inference */
+    if (type_str == "float" && socket.type != SocketType::ENUM) {
+      MinMax mm = infer_range(sname);
+      if (mm.has_min) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%g", (double)mm.min_val);
+        out << ",\n          \"min\": " << buf;
+      }
+      if (mm.has_max) {
+        char buf[32];
+        snprintf(buf, sizeof(buf), "%g", (double)mm.max_val);
+        out << ",\n          \"max\": " << buf;
+      }
+    }
+
+    out << "\n        }";
+  }
+  out << "\n      ],\n";
+
+  /* Outputs */
+  out << "      \"outputs\": [\n";
+  bool first_output = true;
+  for (const SocketType &socket : nt->outputs) {
+    std::string type_str = socket_type_str(socket.type);
+    std::string sname = socket.name.c_str();
+    std::string sui_name = socket.ui_name.c_str();
+    if (sui_name.empty())
+      sui_name = sname;
+
+    if (!first_output)
+      out << ",\n";
+    first_output = false;
+
+    out << "        {\n";
+    out << "          \"name\": \"" << json_escape(sname) << "\",\n";
+    out << "          \"type\": \"" << json_escape(type_str) << "\",\n";
+    out << "          \"ui_name\": \"" << json_escape(sui_name) << "\"";
+    out << "\n        }";
+  }
+  out << "\n      ]\n";
+
+  out << "    }";
+}
+
+/* Write a list of node types to a JSON file, sorted by name. */
+static bool write_nodes(const char *path, vector<const NodeType *> nodes)
+{
+  std::sort(nodes.begin(), nodes.end(), [](const NodeType *a, const NodeType *b) {
+    return a->name < b->name;
+  });
+
+  std::ofstream out(path);
+  if (!out.is_open()) {
+    std::cerr << "Error: cannot write to " << path << std::endl;
+    return false;
+  }
+
+  out << "{\n  \"nodes\": [\n";
+  for (size_t ni = 0; ni < nodes.size(); ni++) {
+    write_node(out, nodes[ni]);
+    if (ni + 1 < nodes.size())
+      out << ",";
+    out << "\n";
+  }
+  out << "  ]\n}\n";
+  out.close();
+
+  std::cout << "Extracted " << nodes.size() << " nodes to " << path << std::endl;
+  return true;
+}
+
 CCL_NAMESPACE_END
 
 using namespace ccl;
@@ -312,136 +456,14 @@ int main()
     }
   }
 
-  /* Sort by name for consistent output */
-  std::sort(shader_nodes.begin(), shader_nodes.end(), [](const NodeType *a, const NodeType *b) {
-    return a->name.c_str() < b->name.c_str();
-  });
+  /* Render settings: the integrator, film and background nodes of the scene. */
+  const vector<const NodeType *> settings_nodes = {
+      Integrator::get_node_type(), Film::get_node_type(), Background::get_node_type()};
 
-  /* Write JSON */
-  std::ofstream out(OUTPUT_PATH);
-  if (!out.is_open()) {
-    std::cerr << "Error: cannot write to " << OUTPUT_PATH << std::endl;
+  if (!write_nodes(OUTPUT_PATH, shader_nodes) ||
+      !write_nodes(SETTINGS_OUTPUT_PATH, settings_nodes))
+  {
     return 1;
   }
-
-  out << "{\n  \"nodes\": [\n";
-
-  for (size_t ni = 0; ni < shader_nodes.size(); ni++) {
-    const NodeType *nt = shader_nodes[ni];
-    std::string node_name = nt->name.c_str();
-    std::string label = title_case(node_name);
-
-    out << "    {\n";
-    out << "      \"name\": \"" << json_escape(node_name) << "\",\n";
-    out << "      \"label\": \"" << json_escape(label) << "\",\n";
-
-    /* Inputs */
-    out << "      \"inputs\": [\n";
-    bool first_input = true;
-    for (const SocketType &socket : nt->inputs) {
-      /* Skip internal sockets */
-      if (socket.flags & SocketType::SVM_INTERNAL)
-        continue;
-      if (socket.flags & SocketType::OSL_INTERNAL)
-        continue;
-
-      std::string type_str = socket_type_str(socket.type);
-      std::string sname = socket.name.c_str();
-      std::string sui_name = socket.ui_name.c_str();
-      if (sui_name.empty())
-        sui_name = sname;
-
-      if (!first_input)
-        out << ",\n";
-      first_input = false;
-
-      out << "        {\n";
-      out << "          \"name\": \"" << json_escape(sname) << "\",\n";
-      out << "          \"type\": \"" << json_escape(type_str) << "\",\n";
-      out << "          \"ui_name\": \"" << json_escape(sui_name) << "\"";
-
-      /* Default value */
-      if (socket.type == SocketType::ENUM) {
-        /* For enums, extract the int default and reverse-map to token */
-        if (socket.default_value) {
-          int int_default = *(const int *)socket.default_value;
-          std::string token = enum_default_token(socket.enum_values, int_default);
-          out << ",\n          \"default\": " << token;
-        }
-      }
-      else {
-        std::string def = extract_default(socket);
-        if (!def.empty()) {
-          out << ",\n          \"default\": " << def;
-        }
-      }
-
-      /* Enum values */
-      if (socket.type == SocketType::ENUM && socket.enum_values) {
-        out << ",\n          \"enum_values\": {";
-        bool first_ev = true;
-        for (auto it = socket.enum_values->begin(); it != socket.enum_values->end(); ++it) {
-          if (!first_ev)
-            out << ", ";
-          first_ev = false;
-          std::string token = it->first.c_str();
-          std::string display = title_case(token);
-          out << "\"" << json_escape(token) << "\": \"" << json_escape(display) << "\"";
-        }
-        out << "}";
-      }
-
-      /* Min/max range inference */
-      if (type_str == "float" && socket.type != SocketType::ENUM) {
-        MinMax mm = infer_range(sname);
-        if (mm.has_min) {
-          char buf[32];
-          snprintf(buf, sizeof(buf), "%g", (double)mm.min_val);
-          out << ",\n          \"min\": " << buf;
-        }
-        if (mm.has_max) {
-          char buf[32];
-          snprintf(buf, sizeof(buf), "%g", (double)mm.max_val);
-          out << ",\n          \"max\": " << buf;
-        }
-      }
-
-      out << "\n        }";
-    }
-    out << "\n      ],\n";
-
-    /* Outputs */
-    out << "      \"outputs\": [\n";
-    bool first_output = true;
-    for (const SocketType &socket : nt->outputs) {
-      std::string type_str = socket_type_str(socket.type);
-      std::string sname = socket.name.c_str();
-      std::string sui_name = socket.ui_name.c_str();
-      if (sui_name.empty())
-        sui_name = sname;
-
-      if (!first_output)
-        out << ",\n";
-      first_output = false;
-
-      out << "        {\n";
-      out << "          \"name\": \"" << json_escape(sname) << "\",\n";
-      out << "          \"type\": \"" << json_escape(type_str) << "\",\n";
-      out << "          \"ui_name\": \"" << json_escape(sui_name) << "\"";
-      out << "\n        }";
-    }
-    out << "\n      ]\n";
-
-    out << "    }";
-    if (ni + 1 < shader_nodes.size())
-      out << ",";
-    out << "\n";
-  }
-
-  out << "  ]\n}\n";
-  out.close();
-
-  std::cout << "Extracted " << shader_nodes.size() << " shader nodes to " << OUTPUT_PATH
-            << std::endl;
   return 0;
 }

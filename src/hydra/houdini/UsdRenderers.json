@@ -8,6 +8,7 @@
         "needsdepth" : false,
         "needsselection" : true,
         "depthstyle" : "linear",
+        "restartrendersettings" : [ "cycles:device", "cycles:threads" ],
         "husk.default_output" : "cycles.exr"
     }
 }

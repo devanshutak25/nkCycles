@@ -58,16 +58,21 @@ endif()
 
 add_custom_command(
   OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/shader_nodes.json
+         ${CMAKE_CURRENT_BINARY_DIR}/render_settings.json
   COMMAND ${CMAKE_COMMAND} -E env "${_shaders_node_dump_env}" $<TARGET_FILE:shaders_node_dump>
   DEPENDS shaders_node_dump
   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
-  COMMENT "Dumping Cycles shader node registry to shader_nodes.json"
+  COMMENT "Dumping Cycles shader nodes and render settings"
   VERBATIM
 )
-add_custom_target(shaders_node_dump_json ALL DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/shader_nodes.json)
+add_custom_target(shaders_node_dump_json ALL DEPENDS
+  ${CMAKE_CURRENT_BINARY_DIR}/shader_nodes.json
+  ${CMAKE_CURRENT_BINARY_DIR}/render_settings.json
+)
 unset(_shaders_node_dump_env)
 
-# Generate the HDAs with hython at install time, as this requires a Houdini license.
+# Generate the HDAs and render settings UI with hython at install time, as this requires a
+# Houdini license.
 if(WIN32)
   set(HYTHON_EXECUTABLE "${HOUDINI_ROOT}/bin/hython.exe")
 elseif(APPLE)
@@ -87,5 +92,17 @@ install(CODE "
   )
   if(NOT _hda_result EQUAL 0)
     message(WARNING \"shader2hda.py failed with exit code \${_hda_result}\")
+  endif()
+
+  message(STATUS \"Generating Cycles render settings UI\")
+  execute_process(
+    COMMAND \"${HYTHON_EXECUTABLE}\"
+            \"${CMAKE_CURRENT_SOURCE_DIR}/src/rendersettings2ds.py\"
+            --json \"${CMAKE_CURRENT_BINARY_DIR}/render_settings.json\"
+            --ds-install-dir \"\${CMAKE_INSTALL_PREFIX}/houdini/soho/parameters\"
+    RESULT_VARIABLE _ds_result
+  )
+  if(NOT _ds_result EQUAL 0)
+    message(WARNING \"rendersettings2ds.py failed with exit code \${_ds_result}\")
   endif()
 ")
