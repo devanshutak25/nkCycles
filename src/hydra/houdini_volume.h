@@ -18,4 +18,10 @@ bool IsHoudiniVolumePath(const std::string &path);
  * running inside Houdini. The grid is shared with Houdini, which copies it before changing it. */
 openvdb::GridBase::ConstPtr LoadHoudiniVdbGrid(const std::string &path, const std::string &name);
 
+/* Native Houdini volume primitive (houdiniFieldAsset, from a SOP network or a .bgeo file),
+ * converted to an OpenVDB grid. Null when it is not found or not running inside Houdini. */
+openvdb::GridBase::ConstPtr LoadHoudiniVolumeGrid(const std::string &path,
+                                                  const std::string &name,
+                                                  int index);
+
 }  // namespace HdCycles

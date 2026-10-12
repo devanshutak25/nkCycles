@@ -36,6 +36,7 @@ TF_DEFINE_PUBLIC_TOKENS(HdCyclesRenderSettingsTokens, HD_CYCLES_RENDER_SETTINGS_
 TF_DEFINE_PRIVATE_TOKENS(_tokens,
     (cycles)
     (openvdbAsset)
+    (houdiniFieldAsset)
 );
 // clang-format on
 
@@ -64,6 +65,9 @@ const TfTokenVector kSupportedBPrimTypes = {
     HdPrimTypeTokens->renderBuffer,
 #ifdef WITH_OPENVDB
     _tokens->openvdbAsset,
+#endif
+#ifdef WITH_HOUDINI_VOLUMES
+    _tokens->houdiniFieldAsset,
 #endif
 };
 
@@ -333,6 +337,11 @@ HdBprim *HdCyclesDelegate::CreateBprim(const TfToken &typeId, const SdfPath &bpr
   }
 #ifdef WITH_OPENVDB
   if (typeId == _tokens->openvdbAsset) {
+    return new HdCyclesField(bprimId, typeId);
+  }
+#endif
+#ifdef WITH_HOUDINI_VOLUMES
+  if (typeId == _tokens->houdiniFieldAsset) {
     return new HdCyclesField(bprimId, typeId);
   }
 #endif

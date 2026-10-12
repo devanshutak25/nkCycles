@@ -26,12 +26,23 @@ HDCYCLES_NAMESPACE_OPEN_SCOPE
 #ifdef WITH_OPENVDB
 class HdCyclesVolumeLoader : public VDBImageLoader {
  public:
-  HdCyclesVolumeLoader(const std::string &filePath, const std::string &gridName)
+  HdCyclesVolumeLoader(const std::string &filePath,
+                       const std::string &gridName,
+                       const bool houdiniField,
+                       const int fieldIndex)
       : VDBImageLoader(gridName)
   {
     /* Disable delay loading and file copying, this has poor performance on network drives. */
     const bool delay_load = false;
 #  ifdef WITH_HOUDINI_VOLUMES
+    if (houdiniField) {
+      grid = LoadHoudiniVolumeGrid(filePath, gridName, fieldIndex);
+      if (!grid) {
+        LOG_ERROR << "Error loading Houdini volume: field '" << gridName << "' not found in "
+                  << filePath;
+      }
+      return;
+    }
     if (IsHoudiniVolumePath(filePath)) {
       grid = LoadHoudiniVdbGrid(filePath, gridName);
       if (!grid) {
@@ -60,7 +71,8 @@ class HdCyclesVolumeLoader : public VDBImageLoader {
 };
 #endif
 
-HdCyclesField::HdCyclesField(const SdfPath &bprimId, const TfToken & /*typeId*/) : HdField(bprimId)
+HdCyclesField::HdCyclesField(const SdfPath &bprimId, const TfToken &typeId)
+    : HdField(bprimId), _houdiniField(typeId == TfToken("houdiniFieldAsset"))
 {
 }
 
@@ -98,9 +110,14 @@ void HdCyclesField::Sync(HdSceneDelegate *sceneDelegate,
         fieldName = ds->GetTypedValue(0.0f);
       }
 
+      int fieldIndex = -1;
+      if (auto ds = schema.GetFieldIndex()) {
+        fieldIndex = ds->GetTypedValue(0.0f);
+      }
+
       if (!fieldName.IsEmpty()) {
-        unique_ptr<ImageLoader> loader = make_unique<HdCyclesVolumeLoader>(filename,
-                                                                           fieldName.GetString());
+        unique_ptr<ImageLoader> loader = make_unique<HdCyclesVolumeLoader>(
+            filename, fieldName.GetString(), _houdiniField, fieldIndex);
 
         const SceneLock lock(renderParam);
 

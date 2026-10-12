@@ -16,6 +16,7 @@ HDCYCLES_NAMESPACE_OPEN_SCOPE
 // clang-format off
 TF_DEFINE_PRIVATE_TOKENS(_tokens,
    (openvdbAsset)
+   (houdiniFieldAsset)
 );
 // clang-format on
 
@@ -49,9 +50,14 @@ void HdCyclesVolume::Populate(HdSceneDelegate *sceneDelegate, HdDirtyBits dirtyB
       }
       const SdfPath fieldId = pathDs->GetTypedValue(0.0f);
 
-      if (auto *const openvdbAsset = static_cast<HdCyclesField *>(
-              sceneDelegate->GetRenderIndex().GetBprim(_tokens->openvdbAsset, fieldId)))
-      {
+      const HdRenderIndex &renderIndex = sceneDelegate->GetRenderIndex();
+      auto *openvdbAsset = static_cast<HdCyclesField *>(
+          renderIndex.GetBprim(_tokens->openvdbAsset, fieldId));
+      if (!openvdbAsset) {
+        openvdbAsset = static_cast<HdCyclesField *>(
+            renderIndex.GetBprim(_tokens->houdiniFieldAsset, fieldId));
+      }
+      if (openvdbAsset) {
         const ustring name(fieldName.GetString());
 
         AttributeStandard std = ATTR_STD_NONE;

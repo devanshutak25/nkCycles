@@ -30,6 +30,7 @@ class HdCyclesField final : public PXR_NS::HdField {
 
  private:
   CCL_NS::ImageHandle _handle;
+  bool _houdiniField;
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

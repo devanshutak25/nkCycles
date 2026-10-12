@@ -93,8 +93,8 @@ if(HOUDINI_FOUND AND WITH_OPENVDB)
   endif()
   set_source_files_properties(houdini_volume.cpp PROPERTIES COMPILE_DEFINITIONS "${_hdk_definitions}")
   unset(_hdk_definitions)
-  # Houdini libraries used by the VDB primitive and its headers.
-  foreach(_hdk_lib GEO UT CE)
+  # Houdini libraries used by the VDB and volume primitives and their headers.
+  foreach(_hdk_lib GT GU GEO UT CE)
     find_library(_hdk_library NAMES lib${_hdk_lib} HOUDINI_${_hdk_lib}
       PATHS ${HOUDINI_ROOT}/custom/houdini/dsolib ${HOUDINI_ROOT}/dsolib
       ${HOUDINI_ROOT}/Frameworks/Houdini.framework/Libraries NO_DEFAULT_PATH)
