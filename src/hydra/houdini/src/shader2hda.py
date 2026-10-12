@@ -236,11 +236,16 @@ def create_shader_signature(node_data, shader_name, label, params):
     )
 
 
-def apply_layout(hda_def, panels, params):
+def apply_layout(hda_def, label, panels, params):
     """Put panel parameters in collapsible folders, set visibility conditions and help."""
     group = hda_def.parmTemplateGroup()
     parm_names = {p["socket"]["name"]: p["parm_ui"] for p in params}
     layout = hou.ParmTemplateGroup()
+    # The network editor lists inputs outside folders last (as "Other"), so with panels the
+    # top parameters go in a folder too, to keep them first like in Blender.
+    top = None
+    if any(p["panel"] for p in params):
+        top = hou.FolderParmTemplate("folder_main", label, folder_type=hou.folderType.Simple)
     folders = {}
     placed = set()
     for param in params:
@@ -263,8 +268,12 @@ def apply_layout(hda_def, panels, params):
                     param["panel"], folder_type=hou.folderType.Collapsible)
                 folders[param["panel"]] = folder
             folder.addParmTemplate(pt)
+        elif top:
+            top.addParmTemplate(pt)
         else:
             layout.append(pt)
+    if top and top.parmTemplates():
+        layout.append(top)
     for panel in panels:
         if panel in folders:
             layout.append(folders[panel])
@@ -319,7 +328,7 @@ def create_hda(node_data, install_dir, layouts, problems):
     hda_def = hda_defs[0]
     hda_def.setIcon("$CYCLES_ICON")
     if layouts:
-        apply_layout(hda_def, panels, params)
+        apply_layout(hda_def, label, panels, params)
     hda_def.save(hda_path)
 
     log("Created: " + hda_path)
