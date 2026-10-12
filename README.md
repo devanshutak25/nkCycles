@@ -39,19 +39,19 @@ Linux and macOS builds have not been tested on Houdini 22.
 | Units | Stages with `metersPerUnit` 1 and 0.01 |
 | Volumes | VDB files, `.bgeo` volumes, and VDB or native Houdini volumes made in SOPs inside a LOP stage; volumes without a material show their density |
 | Geometry | Meshes, curves, points, and implicit USD shapes (Sphere, Cube, Cone, Cylinder, Capsule, Plane) as meshes |
-| AOVs | Any Cycles pass as a render var (`diffuse_direct`, `glossy_color`, `emission`, `ao`, `position`, `uv`, `mist`, `roughness`, ...) and shader AOVs from the AOV Output node |
+| AOVs | Pass toggles on the Cycles Render Settings LOP like Blender's View Layer Passes (Data, Light, Cryptomatte, Shader AOV), any Cycles pass as a render var, shader AOVs from the AOV Output node, Karma's common light path expressions mapped to Cycles passes, Cryptomatte with manifests, husk image filters (slap comps) |
 | Per-object settings | Ray visibility, shadow catcher, holdout, shadow caustics, shadow terminator, AO distance: Cycles tab of the Render Geometry Settings LOP |
 | Tab menu | Cycles nodes grouped like Blender's Add menu (Input, Output, Shader, Displacement, Color, Texture, Utilities/Math, Utilities/Vector) |
 
 ## Known issues
 
 ### Rendering
-- **AOVs:** there is no AOV UI yet (no pass toggles in the render settings); cryptomatte, light path expressions
-  and primvar AOVs are not supported
-  (author render vars by hand: `sourceName` = Cycles pass name). An AOV Output node only reaches the render when
-  the material connects it to an output (e.g. `outputs:cycles:aov`); the Cycles Material Builder has no such
-  output yet.
-- **MaterialX:** changed image textures do not refresh in the viewport.
+- **AOVs:** Cycles has no light path expression engine: only Karma's common LPEs (diffuse, glossy reflection,
+  glossy transmission and volume; combined, direct, indirect; the beauty, direct emission, albedo) map to Cycles
+  passes, others render black. A Blender light pass and the LPE of the same light path (DiffDir and
+  directdiffuse) cannot be rendered together. No primvar AOVs or light groups. Houdini runs live viewport slap
+  comps only for Karma and the Vulkan viewport; with Cycles use the Slap Comp Import COP or husk image filters.
+- **MaterialX:** a user reported image textures not refreshing after a file path change; not reproduced yet.
 - **MaterialX limits:** noise nodes use Cycles' noise (same character, different pattern); the OpenPBR coat is
   approximated; BSDF layering is an add; matrix nodes, hex tiling, some compositing nodes and MaterialX volumes
   are not supported. Editing a parameter rebuilds the whole shader.
@@ -80,8 +80,8 @@ Roughly in this order:
 
 1. Confirm the orbit jump is gone.
 2. Shader node ports, Render Settings LOP touch-ups, ramps and degrees.
-3. AOVs: cryptomatte, an AOV UI, AOV outputs in the Cycles Material Builder.
-4. Per-light settings, motion blur.
+3. Light groups, per-light settings.
+4. Motion blur.
 5. OSL (OptiX only on the GPU).
 
 ## Building
@@ -171,6 +171,10 @@ node generator is ported from that repository's `shaders` branch, by Christopher
 | Changing the device or thread count restarts the delegate. | `16f63cd20` |
 | `shader_defaults.json` in the resource directory overrides Cycles socket defaults per node type. Houdini only writes parameters that differ from the UI default, so the delegate must use the same defaults as the UI. | `2595a4dd6` |
 | **AOVs:** render vars can name any Cycles pass, with a default format from the pass; other names are shader AOVs written by AOV Output nodes. Extra material terminals (e.g. `outputs:cycles:aov`) pull AOV Output nodes into the network. | `49debc368` |
+| **Light path expression render vars:** Karma's common LPEs map to the Cycles light passes holding the same light paths, with the albedo like an LPE. AOVs of the same Cycles pass type share one pass (the kernel writes one buffer per type). | `87d538e45` |
+| **Render vars named differently from their source** (husk names AOVs after the render var prim) found no pass and were black. | `b8d649ce2` |
+| **Viewport color AOV readable:** with the OpenGL display driver the color buffer had no data, so Houdini's Slap Comp Import found no color. | `ca84bfc1c` |
+| **Cryptomatte:** `CryptoObject00`, `CryptoMaterial00`, `CryptoAsset00`, ... render vars; objects, assets and materials named after their prims; the Cryptomatte metadata and manifests go into the image through the render stats. | `5515a46ac` |
 | **MaterialX materials** (`materialx.cpp`): HdMtlx builds a MaterialX document per terminal (render contexts `mtlx` and `kma`), surfaces map to the Principled BSDF, about 100 standard/pbr library nodes map to Cycles nodes and node graph nodes are expanded from the MaterialX libraries. Built when USD provides `hdMtlx`. | `afc6f7453` |
 | **Per-object settings** from constant `cycles:object:<setting>` primvars: `visible_camera`/`_diffuse`/`_glossy`/`_transmission`/`_volume_scatter`/`_shadow`, `is_shadow_catcher`, `use_holdout`, shadow caustics, shadow terminator offsets, `ao_distance`. | `30aa47d9d` |
 
@@ -186,6 +190,9 @@ node generator is ported from that repository's `shaders` branch, by Christopher
 | **Tab menu sub-menus like Blender's Add menu,** parsed from Blender's `node_add_menu_shader.py`; nodes not in Blender's menu (Mix (Legacy), Scene Time, ...) in the closest sub-menu. | `f400ddc23`, `3d7bbdf1a` |
 | **Inputs in the network editor in Blender's order:** inputs outside parameter folders were listed last ("Other"), e.g. Base Color on the Principled BSDF. | `b23302f41` |
 | **More render settings:** Sample Subset, Path Guiding debug options, alpha threshold and mist pass. | `54e75e1eb` |
+| **Render passes on the Cycles Render Settings LOP** like Blender's View Layer Passes (Data, Light, Cryptomatte, Shader AOV, with Blender's EXR names) plus Karma-named light path expressions. | `f7d18bc95`, `fc3d31d29` |
+| **Image Filters** on the Cycles Render Settings LOP: husk slap comps from the Image Filter LOP. | `86ab0b082` |
+| **AOV Output node in Cycles material builders:** a pass-through between the shader and the material output, so Houdini exports it. | `44ada1aaf` |
 | **Cycles tab on the Render Geometry Settings LOP** (`HdCyclesPlugin_Geometry.ds`) for the per-object settings, laid out like Blender's object Visibility panel. | `30aa47d9d` |
 
 ### Documentation
