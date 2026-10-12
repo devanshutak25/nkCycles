@@ -8,8 +8,8 @@ Blender, and Blender-style render settings.
 This is a fork of [cjhosken/hdCycles](https://projects.blender.org/cjhosken/hdCycles) (itself based on Blender's
 Cycles repository). The work for Houdini 22 lives on the `houdini-22` branch.
 
-> **Status: work in progress.** Daily lookdev with Cycles shaders, USD lights, volumes, AOVs and per-object
-> settings works. Karma/MaterialX materials and OSL do **not** work yet; see [Known issues](#known-issues).
+> **Status: work in progress.** Daily lookdev with Cycles shaders, Karma/MaterialX materials, USD lights,
+> volumes, AOVs and per-object settings works. OSL does **not** work yet; see [Known issues](#known-issues).
 
 ## Tested with
 
@@ -30,6 +30,7 @@ Linux and macOS builds have not been tested on Houdini 22.
 | Denoising | OpenImageDenoise (GPU or CPU) and OptiX |
 | Shaders | All 96 user-facing Cycles shader nodes, as Houdini VOP nodes inside a **USD Cycles Material Builder** |
 | Shader node UI | Blender 5.2 order, labels, menus, collapsible panels, hide rules and default values |
+| MaterialX / Karma materials | Karma and MaterialX Material Builder materials are translated to Cycles nodes: Standard Surface, OpenPBR, UsdPreviewSurface and glTF PBR as the Principled BSDF, plus about 100 MaterialX nodes (images, math, noise, color, geometry, closures); node graph nodes from the MaterialX libraries are expanded. Matches Karma within a few percent in the tests |
 | USD lights | Sphere, rect, disk, distant and dome lights match Karma within 1% (normalized and not) |
 | Render settings | **Cycles Render Settings LOP**, a Cycles tab on the stock Render Settings LOP, and viewport display options, all laid out like Blender's render properties |
 | Interactive edits | Moving/editing lights, objects, materials and settings updates the render |
@@ -49,8 +50,10 @@ Linux and macOS builds have not been tested on Houdini 22.
   (author render vars by hand: `sourceName` = Cycles pass name). An AOV Output node only reaches the render when
   the material connects it to an output (e.g. `outputs:cycles:aov`); the Cycles Material Builder has no such
   output yet.
-- **Karma / MaterialX materials are not translated.** Use the Cycles Material Builder.
-- **OSL** is not available in Houdini builds.
+- **MaterialX limits:** noise nodes use Cycles' noise (same character, different pattern); the OpenPBR coat is
+  approximated; BSDF layering is an add; matrix nodes, hex tiling, some compositing nodes and MaterialX volumes
+  are not supported. Editing a parameter rebuilds the whole shader.
+- **OSL** is not available in Houdini builds (on the GPU it would be OptiX only).
 - The Principled Hair BSDF needs a recheck of OptiX vs CPU output.
 
 ### Viewport
@@ -58,13 +61,13 @@ Linux and macOS builds have not been tested on Houdini 22.
   depth Hydra expects (it was Cycles' camera distance), which was the most likely cause; not confirmed yet.
 
 ### UI
-- Port locations are wrong on some shader nodes.
+- Port locations are wrong on some shader nodes (the Principled BSDF inputs listed last is fixed).
 - The Cycles Render Settings LOP needs UX touch-ups.
 - Color Ramp and the curve nodes expose raw arrays instead of Houdini ramp parameters; angles are in radians.
 
 ### Missing features
 - Per-light settings (Cycles light options such as cast shadow, MIS, max bounces).
-- Motion blur, sample subset and the Fast GI method menu are not exposed.
+- Motion blur and the Fast GI method menu are not exposed.
 - Viewport resolution divider (the viewport always renders at full resolution).
 - HIP (AMD) and oneAPI (Intel) devices are disabled; NVIDIA and CPU only.
 
@@ -76,8 +79,7 @@ Roughly in this order:
 2. Shader node ports, Render Settings LOP touch-ups, ramps and degrees.
 3. AOVs: cryptomatte, an AOV UI, AOV outputs in the Cycles Material Builder.
 4. Per-light settings, motion blur.
-5. MaterialX / Karma material translation.
-6. OSL.
+5. OSL (OptiX only on the GPU).
 
 ## Building
 
@@ -152,6 +154,9 @@ node generator is ported from that repository's `shaders` branch, by Christopher
 | **Volumes made in SOPs failed to load** ("could not open file op:/stage/..."). Houdini passes these as `op:` paths, not files. The delegate now gets the grids from Houdini through `USD_SopVol` (`SOPgetVDBVolumePrimitive`), sharing them instead of copying. This needs the Houdini SDK headers and `libGEO`/`libUT`/`libCE`, so it is only built for Houdini (`houdini_volume.cpp`). | `0c125583d` |
 | **Native Houdini volumes did not render** (`houdiniFieldAsset`, from SOPs or `.bgeo` files). They come from `SOPgetHoudiniVolumePrimitive` and are converted to OpenVDB grids with `GU_PrimVDB::buildFromPrimVolume` (links `libGT`/`libGU` too). | `4a3b4831e` |
 | **Implicit USD shapes did not render** (Sphere, Cube, Cone, Cylinder, Capsule, Plane). A scene index plugin applies `HdsiImplicitSurfaceSceneIndex` for Cycles, like Storm and hdPrman. | `df65e282f` |
+| **Volume shaders made the volume disappear.** Houdini's material builder authors every Cycles shader as the surface terminal, also volume shaders; a volume output on the surface terminal now goes to the volume input. | `a3710bf34` |
+| **8 bit image textures rendered linear.** Cycles image nodes start as scene linear and an empty color space was looked up by name; Houdini's ACES OpenColorIO configuration has no `default_byte` role, which automatic detection relied on (core Cycles fix, plus the delegate treating an empty color space as automatic). | `9a09aff94`, `29ce63d07` |
+| **The sample subset settings had no effect:** the session overwrote them. | `6c119c43c` |
 | **The depth AOV was camera distance in meters** (1e10 for background) instead of Hydra's 0..1 window depth, which the Houdini viewport uses to composite guides. It is converted with the camera projection in the viewport (`houdini:viewport`); husk renders keep the distance. | `14fb1d2c8` |
 
 ### Render delegate features
@@ -163,6 +168,7 @@ node generator is ported from that repository's `shaders` branch, by Christopher
 | Changing the device or thread count restarts the delegate. | `16f63cd20` |
 | `shader_defaults.json` in the resource directory overrides Cycles socket defaults per node type. Houdini only writes parameters that differ from the UI default, so the delegate must use the same defaults as the UI. | `2595a4dd6` |
 | **AOVs:** render vars can name any Cycles pass, with a default format from the pass; other names are shader AOVs written by AOV Output nodes. Extra material terminals (e.g. `outputs:cycles:aov`) pull AOV Output nodes into the network. | `49debc368` |
+| **MaterialX materials** (`materialx.cpp`): HdMtlx builds a MaterialX document per terminal (render contexts `mtlx` and `kma`), surfaces map to the Principled BSDF, about 100 standard/pbr library nodes map to Cycles nodes and node graph nodes are expanded from the MaterialX libraries. Built when USD provides `hdMtlx`. | `afc6f7453` |
 | **Per-object settings** from constant `cycles:object:<setting>` primvars: `visible_camera`/`_diffuse`/`_glossy`/`_transmission`/`_volume_scatter`/`_shadow`, `is_shadow_catcher`, `use_holdout`, shadow caustics, shadow terminator offsets, `ao_distance`. | `30aa47d9d` |
 
 ### Houdini user interface
@@ -174,7 +180,9 @@ node generator is ported from that repository's `shaders` branch, by Christopher
 | **Slider ranges from Blender's node declarations,** read from the Blender source because the Python API only gives generic ranges. Fixes sliders from −10000 to 10000, and IOR inputs that were clamped below their defaults. | `702fd2b44` |
 | **Cycles tab on the Render Settings LOP and in the viewport display options,** laid out like Blender's render properties: Sampling, Denoise, Path Guiding, Light Paths, Clamping, Caustics, Fast GI, Volumes, Film, Performance. Generated from the delegate's own settings, so defaults and menus always match. | `16f63cd20`, `de6ced211` |
 | **Cycles Render Settings LOP:** one node that creates the render settings, product and var prims with every Cycles setting authored, like Karma's. | `8abcbdb5f` |
-| **Tab menu sub-menus like Blender's Add menu,** parsed from Blender's `node_add_menu_shader.py`. | `f400ddc23` |
+| **Tab menu sub-menus like Blender's Add menu,** parsed from Blender's `node_add_menu_shader.py`; nodes not in Blender's menu (Mix (Legacy), Scene Time, ...) in the closest sub-menu. | `f400ddc23`, `3d7bbdf1a` |
+| **Inputs in the network editor in Blender's order:** inputs outside parameter folders were listed last ("Other"), e.g. Base Color on the Principled BSDF. | `b23302f41` |
+| **More render settings:** Sample Subset, Path Guiding debug options, alpha threshold and mist pass. | `54e75e1eb` |
 | **Cycles tab on the Render Geometry Settings LOP** (`HdCyclesPlugin_Geometry.ds`) for the per-object settings, laid out like Blender's object Visibility panel. | `30aa47d9d` |
 
 ### Documentation
@@ -201,11 +209,12 @@ src/hydra/houdini/
 ```
 
 New Houdini-only source: `src/hydra/houdini_volume.{h,cpp}` (volumes from SOPs and native Houdini volumes).
+New source built with `hdMtlx`: `src/hydra/materialx.{h,cpp}` (MaterialX translation).
 
 Modified upstream files: `src/hydra/{camera,display_driver,field,geometry,light,material,output_driver,plugin,render_delegate,render_pass,session,volume}`,
 `src/hydra/resources/plugInfo.json`,
 `src/hydra/CMakeLists.txt`, `src/cmake/external_libs.cmake`, `src/cmake/Modules/FindUSDHoudini.cmake`,
-`src/scene/shader_nodes.cpp`, `BUILDING.md`, `README.md`.
+`src/scene/shader_nodes.cpp`, `src/util/colorspace.cpp`, `BUILDING.md`, `README.md`.
 
 Full history: `git log main..houdini-22`.
 
