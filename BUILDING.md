@@ -117,9 +117,13 @@ The packages directory can be found (or needs to be created) under:
 - Windows: `C:/Users/[username]/Documents/houdiniX.Y`
 **Note:** If you move the Cycles installation folder to another place you need to adjust the path in `cycles.json`.
 
-In Houdini, select Cycles in the renderer menu of the Solaris viewport. Render settings are in the Cycles tab of
-the Render Settings LOP and in the viewport display options. Cycles shader nodes are available in the Material
-Library LOP through the USD Cycles Material Builder.
+In Houdini, select Cycles in the renderer menu of the Solaris viewport. Render settings are in the Cycles
+Render Settings LOP, the Cycles tab of the Render Settings LOP and the viewport display options, laid out like
+Blender's Cycles render properties. Cycles shader nodes are available in the Material Library LOP through the
+USD Cycles Material Builder, laid out like Blender's shader nodes and with Blender's default values.
+
+The shader node layouts come from `src/hydra/houdini/blender_node_layouts.json`. To update it for a new
+Blender version, run `src/hydra/houdini/src/blender_node_layouts.py` in that Blender version (see the script).
 
 ## Build System
 
