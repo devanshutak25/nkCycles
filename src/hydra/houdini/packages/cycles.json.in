@@ -7,6 +7,12 @@
       }
     },
     {
+      "CYCLES_ICON": {
+        "value": "$CYCLES_ROOT/icons/blender.png",
+        "method":"replace"
+      }
+    },
+    {
       "PATH": {
         "value": "$CYCLES_ROOT/bin",
         "method": "append"

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<shelfDocument>
+    <tool name="vop_cyclesmtlxsubnet" label="USD Cycles Material Builder" icon="$CYCLES_ICON">
+        <toolMenuContext name="network">
+            <contextOpType>Vop/materialbuilder</contextOpType>
+        </toolMenuContext>
+        <toolSubmenu>Cycles</toolSubmenu>
+        <script scriptType="python"><![CDATA[
+import voptoolutils
+import hou
+import os
+mask = 'cycles ' + voptoolutils.USDPREVIEW_TAB_MASK
+node = voptoolutils.createMaskedUsdPreviewSubnet(kwargs, 'cyclesmaterial', mask, 'USD Cycles Material Builder', 'cycles')
+]]></script>
+    </tool>
+</shelfDocument>
