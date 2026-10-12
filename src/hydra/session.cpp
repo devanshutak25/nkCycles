@@ -81,6 +81,14 @@ string GetLpe(const HdRenderPassAovBinding &aovBinding)
   return TfStringStartsWith(name, "lpe:") ? name.substr(4) : string();
 }
 
+// Source name of a render var: husk names AOVs after the render var prim and passes the source
+// name in the AOV settings.
+TfToken GetSourceName(const HdRenderPassAovBinding &aovBinding)
+{
+  const string sourceName = GetAovSetting(aovBinding, TfToken("sourceName"));
+  return sourceName.empty() ? aovBinding.aovName : TfToken(sourceName);
+}
+
 // Light path expressions, Hydra AOVs, then Cycles pass names ("diffuse_direct", "mist", ...),
 // then shader AOVs written by the AOV Output node, matched by name.
 PassType AovToPassType(const HdRenderPassAovBinding &aovBinding)
@@ -90,12 +98,13 @@ PassType AovToPassType(const HdRenderPassAovBinding &aovBinding)
     return LpeToPassType(lpe);
   }
 
-  const PassType type = HdCyclesSession::GetPassType(aovBinding.aovName);
+  const TfToken sourceName = GetSourceName(aovBinding);
+  const PassType type = HdCyclesSession::GetPassType(sourceName);
   if (type != PASS_NONE) {
     return type;
   }
 
-  const string &name = aovBinding.aovName.GetString();
+  const string &name = sourceName.GetString();
 
   // Primvars are not supported
   if (TfStringStartsWith(name, "primvars:")) {
@@ -290,6 +299,14 @@ void HdCyclesSession::SyncAovBindings(const HdRenderPassAovBindingVector &aovBin
     pass->set_mode(mode);
     pass->set_name(ustring(aovBinding.aovName.GetString()));
     pass->set_include_albedo(includeAlbedo);
+    // Shader AOV passes are matched to AOV Output nodes by name
+    if (type == PASS_AOV_COLOR || type == PASS_AOV_VALUE) {
+      const TfToken sourceName = GetSourceName(aovBinding);
+      if (sourceName != aovBinding.aovName) {
+        pass->set_name(ustring(sourceName.GetString()));
+        _passNames[aovBinding.aovName] = sourceName.GetString();
+      }
+    }
     passOfType[type] = pass;
   }
 }
