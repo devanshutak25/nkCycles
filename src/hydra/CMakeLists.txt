@@ -72,6 +72,37 @@ if(EXISTS ${USD_INCLUDE_DIR}/pxr/imaging/hgiGL)
   list(APPEND SRC_HD_CYCLES_HEADERS display_driver.h)
 endif()
 
+# Volumes from SOPs in a Houdini LOP stage, read through Houdini's libraries.
+if(HOUDINI_FOUND AND WITH_OPENVDB)
+  list(APPEND SRC_HD_CYCLES houdini_volume.cpp)
+  list(APPEND SRC_HD_CYCLES_HEADERS houdini_volume.h)
+  add_definitions(-DWITH_HOUDINI_VOLUMES)
+  # Houdini Development Kit definitions, see toolkit/cmake/HoudiniConfig.cmake.
+  set(_hdk_definitions
+    SIZEOF_VOID_P=8 SESI_LITTLE_ENDIAN UT_ASSERT_LEVEL=0 MAKING_DSO
+    FBX_ENABLED=1 OPENCL_ENABLED=1 OPENVDB_ENABLED=1 USE_VULKAN USE_QT6=1
+    HBOOST_ALL_NO_LIB HBOOST_ASIO_USE_TS_EXECUTOR_AS_DEFAULT=1 HBOOST_BIND_GLOBAL_PLACEHOLDERS=1
+    EIGEN_MALLOC_ALREADY_ALIGNED=0 _SILENCE_ALL_CXX17_DEPRECATION_WARNINGS=1 _USE_MATH_DEFINES
+  )
+  if(WIN32)
+    list(APPEND _hdk_definitions WIN32 AMD64 I386 SWAP_BITFIELDS STRICT WIN32_LEAN_AND_MEAN)
+  elseif(APPLE)
+    list(APPEND _hdk_definitions MBSD MBSD_COCOA MBSD_INTEL)
+  else()
+    list(APPEND _hdk_definitions LINUX AMD64 _GNU_SOURCE)
+  endif()
+  set_source_files_properties(houdini_volume.cpp PROPERTIES COMPILE_DEFINITIONS "${_hdk_definitions}")
+  unset(_hdk_definitions)
+  # Houdini libraries used by the VDB primitive and its headers.
+  foreach(_hdk_lib GEO UT CE)
+    find_library(_hdk_library NAMES lib${_hdk_lib} HOUDINI_${_hdk_lib}
+      PATHS ${HOUDINI_ROOT}/custom/houdini/dsolib ${HOUDINI_ROOT}/dsolib
+      ${HOUDINI_ROOT}/Frameworks/Houdini.framework/Libraries NO_DEFAULT_PATH)
+    list(APPEND LIB ${_hdk_library})
+    unset(_hdk_library CACHE)
+  endforeach()
+endif()
+
 # Silence warning from USD headers using deprecated TBB header.
 add_definitions(
   -D__TBB_show_deprecation_message_atomic_H

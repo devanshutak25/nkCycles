@@ -9,6 +9,9 @@
 #include "util/log.h"
 
 #ifdef WITH_OPENVDB
+#  ifdef WITH_HOUDINI_VOLUMES
+#    include "hydra/houdini_volume.h"
+#  endif
 #  include "hydra/session.h"
 #  include "scene/image_vdb.h"
 #  include "scene/scene.h"
@@ -28,6 +31,16 @@ class HdCyclesVolumeLoader : public VDBImageLoader {
   {
     /* Disable delay loading and file copying, this has poor performance on network drives. */
     const bool delay_load = false;
+#  ifdef WITH_HOUDINI_VOLUMES
+    if (IsHoudiniVolumePath(filePath)) {
+      grid = LoadHoudiniVdbGrid(filePath, gridName);
+      if (!grid) {
+        LOG_ERROR << "Error loading Houdini volume: grid '" << gridName << "' not found in "
+                  << filePath;
+      }
+      return;
+    }
+#  endif
     try {
       openvdb::io::File file(filePath);
 #  ifdef OPENVDB_USE_DELAYED_LOADING
