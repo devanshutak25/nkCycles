@@ -314,6 +314,10 @@ void HdCyclesGeometry<Base, CyclesBase>::InitializeInstance(int index)
 
   instance->set_color(make_float3(0.8f, 0.8f, 0.8f));
   instance->set_random_id(hash_uint2(hash_string(_geom->name.c_str()), index));
+
+  // Cryptomatte object and asset names: the prim and its parent
+  instance->name = _geom->name;
+  instance->set_asset_name(ustring(Base::GetId().GetParentPath().GetString()));
 }
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

@@ -474,6 +474,8 @@ void HdCyclesMaterial::Sync(HdSceneDelegate *sceneDelegate,
 
       if (!_shader) {
         _shader = lock.scene->create_node<Shader>();
+        // Cryptomatte material name
+        _shader->name = id.GetString();
       }
 
       _shader->set_graph(std::move(graph));

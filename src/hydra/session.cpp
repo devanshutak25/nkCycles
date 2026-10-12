@@ -9,14 +9,18 @@
 // Have to include shader.h before background.h so that 'set_shader' uses the correct 'set'
 // overload taking a 'Node *', rather than the one taking a 'bool'
 #include "scene/background.h"
+#include "scene/film.h"
 #include "scene/light.h"
 #include "scene/shader_graph.h"
 #include "scene/shader_nodes.h"
 #include "session/session.h"
+#include "util/string.h"
 
 #include <pxr/imaging/hd/renderBuffer.h>
 
 #include <algorithm>
+#include <cctype>
+#include <cstring>
 
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
@@ -87,6 +91,29 @@ TfToken GetSourceName(const HdRenderPassAovBinding &aovBinding)
 {
   const string sourceName = GetAovSetting(aovBinding, TfToken("sourceName"));
   return sourceName.empty() ? aovBinding.aovName : TfToken(sourceName);
+}
+
+// Cryptomatte render vars have Blender's layer names, "CryptoObject00", "CryptoMaterial01", ...
+// with two ranks per layer.
+const std::pair<const char *, CryptomatteType> kCryptomatteTypes[] = {
+    {"CryptoObject", CRYPT_OBJECT},
+    {"CryptoMaterial", CRYPT_MATERIAL},
+    {"CryptoAsset", CRYPT_ASSET},
+};
+
+bool ParseCryptomatte(const string &name, CryptomatteType &type, int &index)
+{
+  for (const auto &[prefix, cryptomatteType] : kCryptomatteTypes) {
+    const size_t length = strlen(prefix);
+    if (name.size() == length + 2 && TfStringStartsWith(name, prefix) && isdigit(name[length]) &&
+        isdigit(name[length + 1]))
+    {
+      type = cryptomatteType;
+      index = std::stoi(name.substr(length));
+      return true;
+    }
+  }
+  return false;
 }
 
 // Light path expressions, Hydra AOVs, then Cycles pass names ("diffuse_direct", "mist", ...),
@@ -266,8 +293,42 @@ void HdCyclesSession::SyncAovBindings(const HdRenderPassAovBindingVector &aovBin
   // Update passes with requested AOV bindings
   _aovBindings = aovBindings;
   _passNames.clear();
+
+  // Cryptomatte: the kernel writes every rank of the enabled types, in this order, so create all
+  // those passes, also the ones no AOV reads.
+  int cryptomatteTypes = CRYPT_NONE;
+  int cryptomattePasses = 0;
+  for (const HdRenderPassAovBinding &aovBinding : aovBindings) {
+    CryptomatteType cryptomatteType;
+    int index;
+    if (ParseCryptomatte(GetSourceName(aovBinding).GetString(), cryptomatteType, index)) {
+      cryptomatteTypes |= cryptomatteType;
+      cryptomattePasses = std::max(cryptomattePasses, index + 1);
+    }
+  }
+  scene->film->set_cryptomatte_passes(CryptomatteType(cryptomatteTypes));
+  scene->film->set_cryptomatte_depth(cryptomattePasses);
+  for (const auto &[prefix, cryptomatteType] : kCryptomatteTypes) {
+    if (cryptomatteTypes & cryptomatteType) {
+      for (int index = 0; index < cryptomattePasses; index++) {
+        Pass *pass = scene->create_node<Pass>();
+        pass->set_type(PASS_CRYPTOMATTE);
+        pass->set_mode(PassMode::NOISY);
+        pass->set_name(ustring(string_printf("%s%02d", prefix, index)));
+      }
+    }
+  }
+
   std::unordered_map<int, const Pass *> passOfType;
   for (const HdRenderPassAovBinding &aovBinding : aovBindings) {
+    const string sourceName = GetSourceName(aovBinding).GetString();
+    CryptomatteType cryptomatteType;
+    int index;
+    if (ParseCryptomatte(sourceName, cryptomatteType, index)) {
+      _passNames[aovBinding.aovName] = sourceName;
+      continue;
+    }
+
     const PassType type = AovToPassType(aovBinding);
     if (type == PASS_NONE) {
       TF_WARN("Unknown pass %s", aovBinding.aovName.GetText());

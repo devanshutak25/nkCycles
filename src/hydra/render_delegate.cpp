@@ -23,7 +23,11 @@
 #include "scene/background.h"
 #include "scene/film.h"
 #include "scene/integrator.h"
+#include "scene/object.h"
 #include "scene/scene.h"
+#include "scene/shader.h"
+#include "util/murmurhash.h"
+#include "util/string.h"
 #include "session/session.h"
 
 #include <array>
@@ -403,15 +407,41 @@ VtDictionary HdCyclesDelegate::GetRenderStats() const
     status += " | " + substatus;
   }
 
-  return {{"rendererName", VtValue("Cycles")},
-          {"rendererVersion", VtValue(GfVec3i(0, 0, 0))},
-          {"percentDone", VtValue(floor_to_int(fractionDone * 100))},
-          {"fractionDone", VtValue(fractionDone)},
-          {"loadClockTime", VtValue(totalTime - renderTime)},
-          {"peakMemory", VtValue(stats.mem_peak)},
-          {"totalClockTime", VtValue(totalTime)},
-          {"totalMemory", VtValue(stats.mem_used)},
-          {"renderProgressAnnotation", VtValue(status)}};
+  VtDictionary renderStats = {{"rendererName", VtValue("Cycles")},
+                              {"rendererVersion", VtValue(GfVec3i(0, 0, 0))},
+                              {"percentDone", VtValue(floor_to_int(fractionDone * 100))},
+                              {"fractionDone", VtValue(fractionDone)},
+                              {"loadClockTime", VtValue(totalTime - renderTime)},
+                              {"peakMemory", VtValue(stats.mem_peak)},
+                              {"totalClockTime", VtValue(totalTime)},
+                              {"totalMemory", VtValue(stats.mem_used)},
+                              {"renderProgressAnnotation", VtValue(status)}};
+
+  // Cryptomatte metadata of the specification, which husk writes into the image with the stats
+  Scene *const scene = _renderParam->session->scene.get();
+  const int cryptomatte = scene->film->get_cryptomatte_passes();
+  if (cryptomatte != CRYPT_NONE) {
+    const thread_scoped_lock lock(scene->mutex);
+    auto addLayer = [&](const string &name, const string &manifest) {
+      const uint32_t hash = util_murmur_hash3(name.c_str(), name.length(), 0);
+      const string prefix = string_printf("cryptomatte/%08x", hash).substr(0, 19) + "/";
+      renderStats[prefix + "name"] = VtValue(name);
+      renderStats[prefix + "hash"] = VtValue(string("MurmurHash3_32"));
+      renderStats[prefix + "conversion"] = VtValue(string("uint32_to_float32"));
+      renderStats[prefix + "manifest"] = VtValue(manifest);
+    };
+    if (cryptomatte & CRYPT_OBJECT) {
+      addLayer("CryptoObject", scene->object_manager->get_cryptomatte_objects(scene));
+    }
+    if (cryptomatte & CRYPT_MATERIAL) {
+      addLayer("CryptoMaterial", scene->shader_manager->get_cryptomatte_materials(scene));
+    }
+    if (cryptomatte & CRYPT_ASSET) {
+      addLayer("CryptoAsset", scene->object_manager->get_cryptomatte_assets(scene));
+    }
+  }
+
+  return renderStats;
 }
 
 HdAovDescriptor HdCyclesDelegate::GetDefaultAovDescriptor(const TfToken &name) const
