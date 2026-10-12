@@ -155,6 +155,8 @@ void HdCyclesRenderPass::_Execute(const HdRenderPassStateSharedPtr &renderPassSt
                                           aspectRatio);
     }
 
+    _renderParam->SetProjectionMatrix(renderPassState->GetProjectionMatrix());
+
     // Reset session if the session, scene, camera or AOV bindings changed
     if (scene->need_reset() || settingsVersion != _lastSettingsVersion) {
       _lastSettingsVersion = settingsVersion;

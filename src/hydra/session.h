@@ -45,6 +45,30 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
     _stageMetersPerUnit = stageMetersPerUnit;
   }
 
+  // Projection of the camera being rendered, to convert the depth pass to Hydra's depth AOV
+  PXR_NS::GfMatrix4d GetProjectionMatrix() const
+  {
+    const CCL_NS::thread_scoped_lock lock(_projectionMutex);
+    return _projectionMatrix;
+  }
+
+  void SetProjectionMatrix(const PXR_NS::GfMatrix4d &projectionMatrix)
+  {
+    const CCL_NS::thread_scoped_lock lock(_projectionMutex);
+    _projectionMatrix = projectionMatrix;
+  }
+
+  // The Houdini viewport reads the depth AOV as window depth (0..1), final renders keep distance
+  bool GetDepthToWindow() const
+  {
+    return _depthToWindow;
+  }
+
+  void SetDepthToWindow(const bool depthToWindow)
+  {
+    _depthToWindow = depthToWindow;
+  }
+
   PXR_NS::HdRenderPassAovBinding GetDisplayAovBinding() const
   {
     return _displayAovBinding;
@@ -70,6 +94,9 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
  private:
   const bool _ownCyclesSession;
   double _stageMetersPerUnit = 0.01;
+  PXR_NS::GfMatrix4d _projectionMatrix = PXR_NS::GfMatrix4d(1.0);
+  mutable CCL_NS::thread_mutex _projectionMutex;
+  bool _depthToWindow = false;
   std::optional<bool> _transparentBackground;
   PXR_NS::HdRenderPassAovBindingVector _aovBindings;
   PXR_NS::HdRenderPassAovBinding _displayAovBinding;

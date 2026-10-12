@@ -486,6 +486,9 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
     session->params.use_sample_subset = session->params.sample_subset_offset > 0;
     ++_settingsVersion;
   }
+  else if (key == HdCyclesRenderSettingsTokens->houdiniViewport) {
+    _renderParam->SetDepthToWindow(VtValue::Cast<bool>(value).GetWithDefault(false));
+  }
   else if (key == HdCyclesRenderSettingsTokens->transparentBackground) {
     _renderParam->SetTransparentBackground(
         value.IsEmpty() ? std::nullopt :

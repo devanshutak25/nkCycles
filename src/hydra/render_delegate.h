@@ -20,7 +20,8 @@ HDCYCLES_NAMESPACE_OPEN_SCOPE
     ((timeLimit, "cycles:time_limit")) \
     ((samples, "cycles:samples")) \
     ((sampleOffset, "cycles:sample_offset")) \
-    ((transparentBackground, "cycles:background:transparent"))
+    ((transparentBackground, "cycles:background:transparent")) \
+    ((houdiniViewport, "houdini:viewport"))
 // clang-format on
 
 TF_DECLARE_PUBLIC_TOKENS(HdCyclesRenderSettingsTokens, HD_CYCLES_RENDER_SETTINGS_TOKENS);

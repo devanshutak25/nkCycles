@@ -7,7 +7,34 @@
 #include "hydra/render_buffer.h"
 #include "hydra/session.h"
 
+#include <algorithm>
+
 HDCYCLES_NAMESPACE_OPEN_SCOPE
+
+namespace {
+
+// Cycles writes the distance along the camera axis in meters (1e10 for background), Hydra expects
+// window depth in 0..1 like an OpenGL depth buffer. Houdini uses it for the tumble pivot.
+void convert_depth(float *depth,
+                   const size_t num_pixels,
+                   const GfMatrix4d &projection,
+                   const double metersPerUnit)
+{
+  for (size_t i = 0; i < num_pixels; ++i) {
+    if (depth[i] >= 1e9f) {
+      depth[i] = 1.0f;
+      continue;
+    }
+    // Point on the view axis at that distance (camera looks down -Z), in stage units
+    const double z = -depth[i] / metersPerUnit;
+    const double clip_z = z * projection[2][2] + projection[3][2];
+    const double clip_w = z * projection[2][3] + projection[3][3];
+    const double ndc_z = clip_w != 0.0 ? clip_z / clip_w : 1.0;
+    depth[i] = float(std::clamp(ndc_z * 0.5 + 0.5, 0.0, 1.0));
+  }
+}
+
+}  // namespace
 
 HdCyclesOutputDriver::HdCyclesOutputDriver(HdCyclesSession *renderParam)
     : _renderParam(renderParam)
@@ -49,11 +76,25 @@ bool HdCyclesOutputDriver::update_render_tile(const Tile &tile)
       {
         float *const data = static_cast<float *>(renderBuffer->Map());
         TF_VERIFY(tile.get_pass_pixels(aovBinding.aovName.GetString(), channels, data));
+        if (aovBinding.aovName == HdAovTokens->depth && channels == 1 &&
+            _renderParam->GetDepthToWindow()) {
+          convert_depth(data,
+                        tile.size.x * tile.size.y,
+                        _renderParam->GetProjectionMatrix(),
+                        _renderParam->GetStageMetersPerUnit());
+        }
         renderBuffer->Unmap();
       }
       else {
         pixels.resize(channels * tile.size.x * tile.size.y);
         if (tile.get_pass_pixels(aovBinding.aovName.GetString(), channels, pixels.data())) {
+          if (aovBinding.aovName == HdAovTokens->depth && channels == 1 &&
+            _renderParam->GetDepthToWindow()) {
+            convert_depth(pixels.data(),
+                          tile.size.x * tile.size.y,
+                          _renderParam->GetProjectionMatrix(),
+                          _renderParam->GetStageMetersPerUnit());
+          }
           const bool isId = aovBinding.aovName == HdAovTokens->primId ||
                             aovBinding.aovName == HdAovTokens->elementId ||
                             aovBinding.aovName == HdAovTokens->instanceId;
