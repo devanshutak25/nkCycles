@@ -197,6 +197,10 @@ void HdCyclesLight::Sync(HdSceneDelegate *sceneDelegate,
   if (_light->is_modified()) {
     _light->tag_update(lock.scene);
   }
+  // Light position and direction come from the object transform
+  if (_object->is_modified()) {
+    _object->tag_update(lock.scene);
+  }
 
   *dirtyBits = DirtyBits::Clean;
 }
