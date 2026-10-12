@@ -217,7 +217,7 @@ if(HOUDINI_ROOT AND EXISTS ${HOUDINI_ROOT})
   if(_materialx_core_library AND _materialx_format_library AND _materialx_render_library AND 
     _materialx_genglsl_library AND _materialx_genmsl_library)
     list(APPEND USD_LIBRARIES
-      ${_materialx_library}
+      ${_materialx_core_library}
       ${_materialx_format_library}
       ${_materialx_render_library}
       ${_materialx_genglsl_library}
@@ -225,7 +225,11 @@ if(HOUDINI_ROOT AND EXISTS ${HOUDINI_ROOT})
     )
     set(USD_OVERRIDE_MATERIALX ON)
   endif()
-  unset(_materialx_library CACHE)
+  unset(_materialx_core_library CACHE)
+  unset(_materialx_format_library CACHE)
+  unset(_materialx_render_library CACHE)
+  unset(_materialx_genglsl_library CACHE)
+  unset(_materialx_genmsl_library CACHE)
 
   # Cleanup
   unset(_library_dir)
