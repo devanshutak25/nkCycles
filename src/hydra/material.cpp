@@ -11,6 +11,7 @@
 #include "scene/shader.h"
 #include "scene/shader_graph.h"
 #include "scene/shader_nodes.h"
+#include "util/colorspace.h"
 #include "util/path.h"
 #include "util/string.h"
 
@@ -506,6 +507,18 @@ void HdCyclesMaterial::UpdateParameters(NodeDesc &nodeDesc,
     }
 
     SetNodeValue(nodeDesc.node, *input, value);
+
+    /* An empty color space (and UsdUVTexture's "auto") is automatic detection, not a color
+     * space of that name. */
+    if (input->type == SocketType::STRING && input->name == "colorspace") {
+      const ustring colorspace = nodeDesc.node->get_string(*input);
+      if (colorspace.empty() || colorspace == "auto") {
+        nodeDesc.node->set(*input, u_colorspace_auto);
+      }
+      else if (colorspace == "raw") {
+        nodeDesc.node->set(*input, u_colorspace_data);
+      }
+    }
   }
 }
 
@@ -650,6 +663,10 @@ unique_ptr<ShaderGraph> HdCyclesMaterial::BuildShaderGraph(HdMaterialNetworkSche
       /* If it's a native Cycles' node-type, just do the lookup now. */
       if (const NodeType *nodeType = NodeType::find(cyclesType)) {
         nodeDesc.node = graph->create_node(nodeType);
+        /* Image nodes start with scene linear, detect the color space unless one is set. */
+        if (const SocketType *colorspace = nodeType->find_input(ustring("colorspace"))) {
+          nodeDesc.node->set(*colorspace, u_colorspace_auto);
+        }
         if (isNativeNode) {
           GetShaderNodeDefaults().Apply(nodeDesc.node, cyclesType.string());
         }
