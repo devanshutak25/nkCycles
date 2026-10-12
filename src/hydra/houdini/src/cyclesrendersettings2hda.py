@@ -205,6 +205,13 @@ for i in range(1, top.evalParm("shader_aovs") + 1):
     if name:
         color = top.parm("shader_aov_type%%d" %% i).evalAsString() == "color"
         add_var(name, name, "raw", "color3f" if color else "float")
+
+# Image filter lists (slap comps) husk applies to the rendered AOVs
+filters = top.evalParm("imagefilters").split()
+if filters:
+    settings = stage.OverridePrim(top.evalParm("primpath"))
+    settings.CreateRelationship("husk:orderedImageFilters").SetTargets(
+        [Sdf.Path(path) for path in filters])
 """
 
 
@@ -341,6 +348,16 @@ def top_parameters(sockets, reference):
         file_type=hou.fileType.Image,
         help="Image file to render to.")
     group.append(picture)
+
+    image_filters = hou.StringParmTemplate(
+        "imagefilters", "Image Filters", 1,
+        help="Image filter list primitives (made by the Image Filter LOP) that husk applies to "
+             "the rendered AOVs, like a slap comp.")
+    image_filters.setTags({"script_action": "import loputils\n"
+                                            "loputils.selectPrimsInParm(kwargs, True)",
+                           "script_action_icon": "BUTTONS_reselect",
+                           "script_action_help": "Select image filter list primitives."})
+    group.append(image_filters)
 
     # Camera and resolution like the Render Settings LOP, including its prim and resolution
     # choosers.
