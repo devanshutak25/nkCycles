@@ -226,6 +226,14 @@ def create_shader_signature(node_data, shader_name, label, params):
             True,
             shaderhda.ShaderParameterExtraInfos(),
         ))
+    # Houdini only exports nodes linked to the material output. Nodes without outputs (AOV
+    # Output) pass the shader of a "shader" input through to an "out" output instead, so they
+    # can sit between the shader and the material output (resolved in hydra/material.cpp).
+    if not shader_outputs:
+        shader_inputs.insert(0, shaderhda.ShaderParameter(
+            "shader", "surface", None, None, True, shaderhda.ShaderParameterExtraInfos()))
+        shader_outputs.append(shaderhda.ShaderParameter(
+            "out", "surface", None, None, True, shaderhda.ShaderParameterExtraInfos()))
 
     return shaderhda.ShaderSignature(
         shader_name,

@@ -43,6 +43,16 @@ static SdfPath MaterialNodeNameToSdfPath(const TfToken &nodeName)
   return SdfPath::AbsoluteRootPath().AppendChild(nodeName);
 }
 
+/* Houdini's AOV Output node has a "shader" input passed through to its "out" output, see
+ * shader2hda.py. */
+static const TfToken kAovPassThroughInput("shader");
+
+static bool IsAovPassThrough(const ShaderNode *node, const TfToken &socketName)
+{
+  return node && node->type->name == "aov_output" &&
+         (socketName == kAovPassThroughInput || socketName == "out");
+}
+
 /* Default values for Cycles shader node sockets that differ from the Cycles socket defaults,
  * read from "shader_defaults.json" in the resource directory. Host integrations write this
  * when their shader node UI shows other defaults, e.g. the Houdini shader nodes show Blender's
@@ -576,6 +586,11 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
       continue;
     }
 
+    /* The shader passed through an AOV Output node is resolved at the terminals. */
+    if (IsAovPassThrough(nodeDesc.node, dstSocketName)) {
+      continue;
+    }
+
     const UsdToCyclesMapping *inputMapping = nodeDesc.mapping;
     const std::string inputName = inputMapping ?
                                       inputMapping->parameterName(dstSocketName, nullptr) :
@@ -651,9 +666,11 @@ unique_ptr<ShaderGraph> HdCyclesMaterial::BuildShaderGraph(HdMaterialNetworkSche
   HdMaterialNodeContainerSchema nodes = network.GetNodes();
 
   /* Iterate all the nodes first and build a complete but unconnected graph with parameters set. */
+  std::unordered_map<SdfPath, TfToken, SdfPath::Hash> nodeNames;
   for (const TfToken &nodeName : nodes.GetNames()) {
     HdMaterialNodeSchema nodeSchema = nodes.Get(nodeName);
     const SdfPath nodePath = MaterialNodeNameToSdfPath(nodeName);
+    nodeNames[nodePath] = nodeName;
 
     NodeDesc nodeDesc = {};
 
@@ -724,14 +741,38 @@ unique_ptr<ShaderGraph> HdCyclesMaterial::BuildShaderGraph(HdMaterialNetworkSche
   HdMaterialConnectionContainerSchema terminals = network.GetTerminals();
   for (const TfToken &terminalName : terminals.GetNames()) {
     HdMaterialConnectionSchema termSchema = terminals.Get(terminalName);
-    const SdfPath upstreamNodePath =
-        termSchema.GetUpstreamNodePath() ?
-            MaterialNodeNameToSdfPath(termSchema.GetUpstreamNodePath()->GetTypedValue(0.0f)) :
-            SdfPath();
-    const TfToken upstreamOutputName = termSchema.GetUpstreamNodeOutputName() ?
-                                           termSchema.GetUpstreamNodeOutputName()->GetTypedValue(
-                                               0.0f) :
-                                           TfToken();
+    SdfPath upstreamNodePath = termSchema.GetUpstreamNodePath() ?
+                                   MaterialNodeNameToSdfPath(
+                                       termSchema.GetUpstreamNodePath()->GetTypedValue(0.0f)) :
+                                   SdfPath();
+    TfToken upstreamOutputName = termSchema.GetUpstreamNodeOutputName() ?
+                                     termSchema.GetUpstreamNodeOutputName()->GetTypedValue(0.0f) :
+                                     TfToken();
+
+    /* Houdini only exports nodes linked to the material output, so its AOV Output node passes the
+     * shader connected to its "shader" input through to its output. */
+    for (auto aovIt = _nodes.find(upstreamNodePath);
+         aovIt != _nodes.end() && IsAovPassThrough(aovIt->second.node, upstreamOutputName);
+         aovIt = _nodes.find(upstreamNodePath))
+    {
+      HdMaterialConnectionVectorSchema connVec =
+          nodes.Get(nodeNames[upstreamNodePath]).GetInputConnections().Get(kAovPassThroughInput);
+      if (connVec.GetNumElements() == 0) {
+        upstreamNodePath = SdfPath();
+        break;
+      }
+      HdMaterialConnectionSchema connSchema = connVec.GetElement(0);
+      upstreamNodePath = connSchema.GetUpstreamNodePath() ?
+                             MaterialNodeNameToSdfPath(
+                                 connSchema.GetUpstreamNodePath()->GetTypedValue(0.0f)) :
+                             SdfPath();
+      upstreamOutputName = connSchema.GetUpstreamNodeOutputName() ?
+                               connSchema.GetUpstreamNodeOutputName()->GetTypedValue(0.0f) :
+                               TfToken();
+    }
+    if (upstreamNodePath.IsEmpty()) {
+      continue; /* Only an AOV Output node, nothing to shade with. */
+    }
 
     const auto nodeIt = _nodes.find(upstreamNodePath);
     if (nodeIt == _nodes.end()) {
