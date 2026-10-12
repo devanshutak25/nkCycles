@@ -524,6 +524,16 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
       if (const SocketType *socket = node->type->find_input(socketName)) {
         SetNodeValue(node, *socket, value);
         ++_settingsVersion;
+
+        /* The session overwrites the integrator sample subset with its own on every reset. */
+        if (node == scene->integrator &&
+            (socketName == "use_sample_subset" || socketName == "sample_subset_offset" ||
+             socketName == "sample_subset_length"))
+        {
+          session->params.use_sample_subset = scene->integrator->get_use_sample_subset();
+          session->params.sample_subset_offset = scene->integrator->get_sample_subset_offset();
+          session->params.sample_subset_length = scene->integrator->get_sample_subset_length();
+        }
       }
     }
   }
