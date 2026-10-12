@@ -87,8 +87,19 @@ the configure step:
     -DOPTIX_ROOT_DIR="<path to OptiX SDK>"
     -DCYCLES_CUDA_BINARIES_ARCH="sm_75;sm_86;sm_89;sm_120;compute_75"
 
-The GPU device is chosen with the `cycles:device` render setting or the `CYCLES_DEVICE` environment variable,
-for example `CYCLES_DEVICE=OPTIX husk -R Cycles scene.usd`.
+By default the best available GPU is used (OptiX, then CUDA), falling back to the CPU. The device can be chosen
+with the `cycles:device` render setting (`AUTO`, `OPTIX`, `CUDA`, `CPU`) or the `CYCLES_DEVICE` environment
+variable, for example `CYCLES_DEVICE=CPU husk -R Cycles scene.usd`.
+
+On Windows, the precompiled Embree library depends on the SYCL runtime, which conflicts with other Houdini
+plugins that ship their own SYCL runtime (for example Arnold), making the Cycles plugin fail to load. To avoid
+this, build Embree as a static library without SYCL (`EMBREE_STATIC_LIB=ON`, `EMBREE_SYCL_SUPPORT=OFF`) and
+point the configure step to it:
+
+    -DEMBREE_ROOT_DIR="<path to Embree install>"
+
+The install step runs Houdini's `hython` to generate the Cycles shader nodes and the render settings user
+interface, so it requires a Houdini license.
 
 The path to Houdini depends on the operating system, typically:
 - Linux: `/opt/hfsX.Y`
@@ -105,6 +116,10 @@ The packages directory can be found (or needs to be created) under:
 - macOS: `/Users/[username]/Library/Preferences/houdini/X.Y`
 - Windows: `C:/Users/[username]/Documents/houdiniX.Y`
 **Note:** If you move the Cycles installation folder to another place you need to adjust the path in `cycles.json`.
+
+In Houdini, select Cycles in the renderer menu of the Solaris viewport. Render settings are in the Cycles tab of
+the Render Settings LOP and in the viewport display options. Cycles shader nodes are available in the Material
+Library LOP through the USD Cycles Material Builder.
 
 ## Build System
 
