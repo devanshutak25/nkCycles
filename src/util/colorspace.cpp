@@ -332,8 +332,13 @@ ustring ColorSpaceManager::detect_known_colorspace(ustring colorspace,
                                                  config->getRoleColorSpace("default_byte");
       role_colorspace = (role_colorspace) ? role_colorspace : config->getRoleColorSpace("default");
 #  endif
-      if (role_colorspace) {
+      /* OpenColorIO returns an empty name for roles the configuration does not have (like
+       * Houdini's ACES configuration). Byte images are sRGB then, by its interop ID. */
+      if (role_colorspace && role_colorspace[0]) {
         colorspace = role_colorspace;
+      }
+      else if (!is_float && config->getColorSpace("srgb_rec709_scene")) {
+        colorspace = ustring("srgb_rec709_scene");
       }
     }
   }
