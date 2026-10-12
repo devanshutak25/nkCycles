@@ -9,6 +9,14 @@
                         ],
                         "displayName": "Cycles",
                         "priority": 0
+                    },
+                    "HdCycles_ImplicitSurfaceSceneIndexPlugin": {
+                        "bases": [
+                            "HdSceneIndexPlugin"
+                        ],
+                        "loadWithRenderer": "Cycles",
+                        "priority": 0,
+                        "displayName": "Scene Index to turn implicit surfaces into meshes for Cycles"
                     }
                 }
             },
