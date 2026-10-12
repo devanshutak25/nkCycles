@@ -7275,6 +7275,33 @@ void BumpNode::constant_fold(const ConstantFolder &folder)
   /* TODO(sergey): Ignore bump with zero strength. */
 }
 
+/* Default lookup tables for curve and ramp nodes without any points, matching the defaults of
+ * the nodes in Blender: identity curves, and a black to white ramp. Without these, the node would
+ * not be compiled and nodes using its output would read uninitialized values. This happens for
+ * example with USD materials that don't specify the curve or ramp. */
+
+static const array<packed_float3> &curve_table_or_default(const array<packed_float3> &table)
+{
+  static const array<packed_float3> linear = [] {
+    array<packed_float3> a(2);
+    a[0] = zero_float3();
+    a[1] = one_float3();
+    return a;
+  }();
+  return table.size() ? table : linear;
+}
+
+static const array<float> &curve_table_or_default(const array<float> &table)
+{
+  static const array<float> linear = [] {
+    array<float> a(2);
+    a[0] = 0.0f;
+    a[1] = 1.0f;
+    return a;
+  }();
+  return table.size() ? table : linear;
+}
+
 /* Curves node */
 
 CurvesNode::CurvesNode(const NodeType *node_type) : ShaderNode(node_type) {}
@@ -7284,16 +7311,14 @@ void CurvesNode::constant_fold(const ConstantFolder &folder, ShaderInput *value_
 
   /* evaluate fully constant node */
   if (folder.all_inputs_constant()) {
-    if (curves.size() == 0) {
-      return;
-    }
+    const array<packed_float3> &table = curve_table_or_default(curves);
 
     float3 pos = (value - make_float3(min_x, min_x, min_x)) / (max_x - min_x);
     float3 result;
 
-    result[0] = rgb_ramp_lookup(curves.data(), pos[0], true, extrapolate, curves.size()).x;
-    result[1] = rgb_ramp_lookup(curves.data(), pos[1], true, extrapolate, curves.size()).y;
-    result[2] = rgb_ramp_lookup(curves.data(), pos[2], true, extrapolate, curves.size()).z;
+    result[0] = rgb_ramp_lookup(table.data(), pos[0], true, extrapolate, table.size()).x;
+    result[1] = rgb_ramp_lookup(table.data(), pos[1], true, extrapolate, table.size()).y;
+    result[2] = rgb_ramp_lookup(table.data(), pos[2], true, extrapolate, table.size()).z;
 
     folder.make_constant(interp(value, result, fac));
   }
@@ -7306,9 +7331,7 @@ void CurvesNode::constant_fold(const ConstantFolder &folder, ShaderInput *value_
 
 void CurvesNode::compile(SVMCompiler &compiler, ShaderInput *value_in, ShaderOutput *value_out)
 {
-  if (curves.size() == 0) {
-    return;
-  }
+  const array<packed_float3> &table = curve_table_or_default(curves);
 
   compiler.add_node(this,
                     NODE_CURVES,
@@ -7316,21 +7339,17 @@ void CurvesNode::compile(SVMCompiler &compiler, ShaderInput *value_in, ShaderOut
                                   .fac = compiler.input_float("Fac"),
                                   .min_x = min_x,
                                   .max_x = max_x,
-                                  .table_size = uint(curves.size()),
+                                  .table_size = uint(table.size()),
                                   .extrapolate = extrapolate,
                                   .out_offset = compiler.output(value_out->name().c_str())});
-  for (int i = 0; i < curves.size(); i++) {
-    compiler.add_node_data_float4(make_float4(curves[i]));
+  for (int i = 0; i < table.size(); i++) {
+    compiler.add_node_data_float4(make_float4(table[i]));
   }
 }
 
 void CurvesNode::compile(OSLCompiler &compiler, const char *name)
 {
-  if (curves.size() == 0) {
-    return;
-  }
-
-  compiler.parameter_color_array("ramp", curves);
+  compiler.parameter_color_array("ramp", curve_table_or_default(curves));
   compiler.parameter(this, "min_x");
   compiler.parameter(this, "max_x");
   compiler.parameter(this, "extrapolate");
@@ -7445,12 +7464,10 @@ void FloatCurveNode::constant_fold(const ConstantFolder &folder)
 
   /* evaluate fully constant node */
   if (folder.all_inputs_constant()) {
-    if (curve.size() == 0) {
-      return;
-    }
+    const array<float> &table = curve_table_or_default(curve);
 
     const float pos = (value - min_x) / (max_x - min_x);
-    const float result = float_ramp_lookup(curve.data(), pos, true, extrapolate, curve.size());
+    const float result = float_ramp_lookup(table.data(), pos, true, extrapolate, table.size());
 
     folder.make_constant(value + fac * (result - value));
   }
@@ -7463,9 +7480,7 @@ void FloatCurveNode::constant_fold(const ConstantFolder &folder)
 
 void FloatCurveNode::compile(SVMCompiler &compiler)
 {
-  if (curve.size() == 0) {
-    return;
-  }
+  const array<float> &table = curve_table_or_default(curve);
 
   compiler.add_node(this,
                     NODE_FLOAT_CURVE,
@@ -7474,22 +7489,19 @@ void FloatCurveNode::compile(SVMCompiler &compiler)
                         .value_in = compiler.input_float("Value"),
                         .min_x = min_x,
                         .max_x = max_x,
-                        .table_size = uint(curve.size()),
+                        .table_size = uint(table.size()),
                         .extrapolate = extrapolate,
                         .out_offset = compiler.output("Value"),
                     });
-  for (int i = 0; i < curve.size(); i++) {
-    compiler.add_node_data_float(curve[i]);
+  for (int i = 0; i < table.size(); i++) {
+    compiler.add_node_data_float(table[i]);
   }
 }
 
 void FloatCurveNode::compile(OSLCompiler &compiler)
 {
-  if (curve.size() == 0) {
-    return;
-  }
-
-  compiler.parameter_array("ramp", curve.data(), curve.size());
+  const array<float> &table = curve_table_or_default(curve);
+  compiler.parameter_array("ramp", table.data(), table.size());
   compiler.parameter(this, "min_x");
   compiler.parameter(this, "max_x");
   compiler.parameter(this, "extrapolate");
@@ -7516,28 +7528,41 @@ NODE_DEFINE(RGBRampNode)
 
 RGBRampNode::RGBRampNode() : ShaderNode(get_node_type()) {}
 
+/* Alpha values matching the ramp colors, opaque if not specified. */
+static array<float> ramp_alpha_or_default(const array<packed_float3> &ramp,
+                                          const array<float> &ramp_alpha)
+{
+  if (ramp_alpha.size() == ramp.size()) {
+    return ramp_alpha;
+  }
+  array<float> alpha(ramp.size());
+  for (size_t i = 0; i < alpha.size(); i++) {
+    alpha[i] = 1.0f;
+  }
+  return alpha;
+}
+
 void RGBRampNode::constant_fold(const ConstantFolder &folder)
 {
-  if (ramp.size() == 0 || ramp.size() != ramp_alpha.size()) {
-    return;
-  }
+  const array<packed_float3> &table = curve_table_or_default(ramp);
+  const array<float> table_alpha = ramp_alpha_or_default(table, ramp_alpha);
 
   if (folder.all_inputs_constant()) {
-    const float f = clamp(fac, 0.0f, 1.0f) * (ramp.size() - 1);
+    const float f = clamp(fac, 0.0f, 1.0f) * (table.size() - 1);
 
     /* clamp int as well in case of NaN */
-    const int i = clamp((int)f, 0, ramp.size() - 1);
+    const int i = clamp((int)f, 0, table.size() - 1);
     const float t = f - (float)i;
 
     const bool use_lerp = interpolate && t > 0.0f;
 
     if (folder.output == output("Color")) {
-      const float3 color = rgb_ramp_lookup(ramp.data(), fac, use_lerp, false, ramp.size());
+      const float3 color = rgb_ramp_lookup(table.data(), fac, use_lerp, false, table.size());
       folder.make_constant(color);
     }
     else if (folder.output == output("Alpha")) {
       const float alpha = float_ramp_lookup(
-          ramp_alpha.data(), fac, use_lerp, false, ramp_alpha.size());
+          table_alpha.data(), fac, use_lerp, false, table_alpha.size());
       folder.make_constant(alpha);
     }
   }
@@ -7545,30 +7570,28 @@ void RGBRampNode::constant_fold(const ConstantFolder &folder)
 
 void RGBRampNode::compile(SVMCompiler &compiler)
 {
-  if (ramp.size() == 0 || ramp.size() != ramp_alpha.size()) {
-    return;
-  }
+  const array<packed_float3> &table = curve_table_or_default(ramp);
+  const array<float> table_alpha = ramp_alpha_or_default(table, ramp_alpha);
 
   compiler.add_node(this,
                     NODE_RGB_RAMP,
-                    SVMNodeRGBRamp{.table_size = uint(ramp.size()),
+                    SVMNodeRGBRamp{.table_size = uint(table.size()),
                                    .fac = compiler.input_float("Fac"),
                                    .interpolate = interpolate,
                                    .color_offset = compiler.output("Color"),
                                    .alpha_offset = compiler.output("Alpha")});
-  for (int i = 0; i < ramp.size(); i++) {
-    compiler.add_node_data_float4(make_float4(ramp[i], ramp_alpha[i]));
+  for (int i = 0; i < table.size(); i++) {
+    compiler.add_node_data_float4(make_float4(table[i], table_alpha[i]));
   }
 }
 
 void RGBRampNode::compile(OSLCompiler &compiler)
 {
-  if (ramp.size() == 0 || ramp.size() != ramp_alpha.size()) {
-    return;
-  }
+  const array<packed_float3> &table = curve_table_or_default(ramp);
+  const array<float> table_alpha = ramp_alpha_or_default(table, ramp_alpha);
 
-  compiler.parameter_color_array("ramp_color", ramp);
-  compiler.parameter_array("ramp_alpha", ramp_alpha.data(), ramp_alpha.size());
+  compiler.parameter_color_array("ramp_color", table);
+  compiler.parameter_array("ramp_alpha", table_alpha.data(), table_alpha.size());
   compiler.parameter(this, "interpolate");
 
   compiler.add(this, "node_rgb_ramp");
@@ -7580,7 +7603,8 @@ NODE_DEFINE(SetNormalNode)
 {
   NodeType *type = NodeType::add("set_normal", create, NodeType::SHADER);
 
-  SOCKET_IN_VECTOR(direction, "Direction", zero_float3());
+  /* Use the shading normal when not connected, as the kernel always expects a link. */
+  SOCKET_IN_VECTOR(direction, "Direction", zero_float3(), SocketType::LINK_NORMAL);
   SOCKET_OUT_NORMAL(normal, "Normal");
 
   return type;
