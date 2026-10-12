@@ -583,12 +583,15 @@ endif()
 
 if(WITH_CYCLES_OPENIMAGEDENOISE)
   set(WITH_OPENIMAGEDENOISE ON)
-  find_package(OpenImageDenoise REQUIRED)
 
-  if(WIN32)
-    add_bundled_libraries(openimagedenoise/bin)
-  else()
-    add_bundled_libraries(openimagedenoise/lib)
+  if(NOT USD_OVERRIDE_OPENIMAGEDENOISE)
+    find_package(OpenImageDenoise REQUIRED)
+
+    if(WIN32)
+      add_bundled_libraries(openimagedenoise/bin)
+    else()
+      add_bundled_libraries(openimagedenoise/lib)
+    endif()
   endif()
 endif()
 ###########################################################################

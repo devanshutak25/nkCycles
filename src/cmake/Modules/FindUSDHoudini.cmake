@@ -136,6 +136,19 @@ if(HOUDINI_ROOT AND EXISTS ${HOUDINI_ROOT})
   endif()
   unset(_tbb_library CACHE)
 
+  # OpenImageDenoise
+  # Houdini loads its own OpenImageDenoise library into the process, so link against
+  # that one. Otherwise the DLL / shared library with the same name already loaded by
+  # Houdini would be used at runtime, which may be an incompatible version.
+  find_library(_openimagedenoise_library NAMES OpenImageDenoise PATHS ${_library_dir} NO_DEFAULT_PATH)
+  if(_openimagedenoise_library AND EXISTS ${_include_dir}/OpenImageDenoise/oidn.h)
+    set(OPENIMAGEDENOISE_INCLUDE_DIRS ${_include_dir})
+    set(OPENIMAGEDENOISE_LIBRARIES ${_openimagedenoise_library})
+    set(OPENIMAGEDENOISE_FOUND ON)
+    set(USD_OVERRIDE_OPENIMAGEDENOISE ON)
+  endif()
+  unset(_openimagedenoise_library CACHE)
+
   # OpenColorIO
   find_library(_opencolorio_library NAMES OpenColorIO_sidefx PATHS ${_library_dir} NO_DEFAULT_PATH)
   if(_opencolorio_library)
