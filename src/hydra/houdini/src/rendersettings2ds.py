@@ -14,7 +14,9 @@ $HOUDINI_PATH/soho/parameters:
 Each parameter is a "cycles:..." render setting forwarded to the delegate.
 Types, defaults and menus come from the Cycles node sockets dumped to
 render_settings.json, so the UI always shows what the delegate uses when a
-setting is not authored. Labels and layout follow Blender's render properties.
+setting is not authored. Labels and layout follow Blender's Cycles render
+properties, with Blender's panels as collapsible folders. The same layout is
+used by the Cycles Render Settings LOP (cyclesrendersettings2hda.py).
 """
 
 import argparse
@@ -82,7 +84,8 @@ MENU_ITEMS = {
 }
 
 
-def S(name, label, help, range=None, viewport=False, toolbar_icon=None, hidewhen=None):
+def S(name, label, help, range=None, viewport=False, toolbar_icon=None, hidewhen=None,
+      disablewhen=None):
     """A single setting in the layout."""
     return {
         "name": name,
@@ -92,141 +95,184 @@ def S(name, label, help, range=None, viewport=False, toolbar_icon=None, hidewhen
         "viewport": viewport,
         "toolbar_icon": toolbar_icon,
         "hidewhen": hidewhen,
+        "disablewhen": disablewhen,
     }
 
 
-# Layout of the settings, as (section, [settings]).
+def P(label, items, open=False, toggle=None):
+    """A panel of settings and sub-panels, like a Blender properties panel.
+
+    toggle is the setting shown in the panel header in Blender. It is the first parameter of the
+    folder, and the other settings in the panel are disabled when it is off.
+    """
+    return {"panel": label, "items": items, "open": open, "toggle": toggle}
+
+
+# Layout of the settings, following Blender's Cycles render properties.
 LAYOUT = [
-    ("Device", [
+    P("Device", [
         S("cycles:device", "Device",
           "Device to render with. Automatic uses the best available GPU (OptiX, then CUDA, "
           "HIP, oneAPI, Metal) and falls back to the CPU. Changing it restarts the render.",
           viewport=True),
-        S("cycles:threads", "Threads",
-          "Number of CPU threads to use. 0 uses all cores.",
-          range=(0, 64, True, False)),
+    ], open=True),
+    P("Sampling", [
+        P("Render", [
+            S("cycles:integrator:use_adaptive_sampling", "Noise Threshold",
+              "Automatically reduce the number of samples per pixel based on estimated noise "
+              "level.",
+              viewport=True),
+            S("cycles:integrator:adaptive_threshold", "Threshold",
+              "Noise level step to stop sampling at, lower values reduce noise at the cost of "
+              "render time. 0 for automatic setting based on the number of samples.",
+              range=(0, 1, True, True), viewport=True,
+              disablewhen="{ cycles:integrator:use_adaptive_sampling == 0 }"),
+            S("cycles:samples", "Max Samples",
+              "Number of samples to render for each pixel.",
+              range=(1, 4096, True, False), viewport=True),
+            S("cycles:integrator:adaptive_min_samples", "Min Samples",
+              "Minimum number of samples before adaptive sampling stops a pixel. 0 for automatic "
+              "setting based on the noise threshold.",
+              range=(0, 4096, True, False), viewport=True,
+              disablewhen="{ cycles:integrator:use_adaptive_sampling == 0 }"),
+            S("cycles:time_limit", "Time Limit",
+              "Limit the render time in seconds, excluding synchronization time. 0 disables the "
+              "limit.",
+              range=(0, 600, True, False)),
+            P("Denoise", [
+                S("cycles:integrator:use_denoise", "Denoise",
+                  "Denoise the rendered image.",
+                  viewport=True, toolbar_icon="VIEW_display_denoise"),
+                S("cycles:integrator:denoiser_type", "Denoiser",
+                  "Denoiser to use. OptiX requires an NVIDIA GPU.",
+                  viewport=True),
+                S("cycles:integrator:denoiser_prefilter", "Prefilter",
+                  "Prefilter of the guiding passes (albedo and normal). Accurate gives the best "
+                  "detail, None should only be used when the guiding passes are noise free.",
+                  viewport=True),
+                S("cycles:integrator:denoiser_quality", "Quality",
+                  "Quality of the OpenImageDenoise denoiser, balanced and fast trade quality for "
+                  "speed.",
+                  viewport=True,
+                  hidewhen="{ cycles:integrator:denoiser_type != openimagedenoise }"),
+                S("cycles:integrator:denoise_start_sample", "Start Sample",
+                  "Sample to start denoising the interactive render at.",
+                  range=(0, 64, True, False), viewport=True),
+                S("cycles:integrator:denoise_use_gpu", "Use GPU",
+                  "Run the denoiser on the GPU when available.",
+                  viewport=True),
+            ], toggle="cycles:integrator:use_denoise"),
+        ], open=True),
+        P("Path Guiding", [
+            S("cycles:integrator:use_guiding", "Path Guiding",
+              "Use path guiding for sampling paths. Path guiding incrementally learns the light "
+              "distribution of the scene and guides paths into directions with high direct and "
+              "indirect light contributions. Only supported on the CPU."),
+            S("cycles:integrator:guiding_training_samples", "Training Samples",
+              "The maximum number of samples used for training path guiding. 0 trains for all "
+              "samples.",
+              range=(0, 1024, True, False)),
+            S("cycles:integrator:use_surface_guiding", "Surface",
+              "Use guiding when sampling directions on a surface."),
+            S("cycles:integrator:use_volume_guiding", "Volume",
+              "Use guiding when sampling directions inside a volume."),
+        ], toggle="cycles:integrator:use_guiding"),
+        P("Advanced", [
+            S("cycles:integrator:sampling_pattern", "Pattern",
+              "Random sampling pattern used by the integrator."),
+            S("cycles:integrator:seed", "Seed",
+              "Seed value for the random number generator, to get different noise patterns.",
+              range=(0, 100, True, False)),
+            S("cycles:integrator:scrambling_distance", "Scrambling Distance",
+              "Reduce the randomization between pixels to improve GPU rendering performance, at "
+              "the cost of possible rendering artifacts if set too low.",
+              range=(0, 1, True, True)),
+            S("cycles:integrator:min_bounce", "Min Light Bounces",
+              "Minimum number of light bounces. Setting this higher reduces noise in the first "
+              "bounces, but can also be less efficient for more complex geometry like hair.",
+              range=(0, 32, True, False)),
+            S("cycles:integrator:transparent_min_bounce", "Min Transparent Bounces",
+              "Minimum number of transparent bounces. Setting this higher reduces noise in the "
+              "first bounces, but can also be less efficient for more complex geometry like "
+              "hair.",
+              range=(0, 32, True, False)),
+            S("cycles:sample_offset", "Sample Offset",
+              "Number of samples to skip when starting the render.",
+              range=(0, 4096, True, False)),
+        ]),
+        P("Lights", [
+            S("cycles:integrator:use_light_tree", "Light Tree",
+              "Sample multiple lights more efficiently based on estimated contribution at every "
+              "shading point."),
+            S("cycles:integrator:light_sampling_threshold", "Light Threshold",
+              "Probabilistically terminate light samples when the light contribution is below "
+              "this threshold (more noise but faster rendering). 0 disables the test.",
+              range=(0, 1, True, False)),
+        ]),
+    ], open=True),
+    P("Light Paths", [
+        P("Max Bounces", [
+            S("cycles:integrator:max_bounce", "Total",
+              "Total maximum number of bounces.",
+              range=(0, 32, True, False), viewport=True),
+            S("cycles:integrator:max_diffuse_bounce", "Diffuse",
+              "Maximum number of diffuse reflection bounces, bounded by total maximum.",
+              range=(0, 32, True, False), viewport=True),
+            S("cycles:integrator:max_glossy_bounce", "Glossy",
+              "Maximum number of glossy reflection bounces, bounded by total maximum.",
+              range=(0, 32, True, False), viewport=True),
+            S("cycles:integrator:max_transmission_bounce", "Transmission",
+              "Maximum number of transmission bounces, bounded by total maximum.",
+              range=(0, 32, True, False), viewport=True),
+            S("cycles:integrator:max_volume_bounce", "Volume",
+              "Maximum number of volumetric scattering events.",
+              range=(0, 32, True, False), viewport=True),
+            S("cycles:integrator:transparent_max_bounce", "Transparent",
+              "Maximum number of transparent bounces. This is independent of maximum number of "
+              "other bounces.",
+              range=(0, 32, True, False), viewport=True),
+        ], open=True),
+        P("Clamping", [
+            S("cycles:integrator:sample_clamp_direct", "Direct Light",
+              "If non-zero, the maximum value for a direct sample, higher values will be scaled "
+              "down to avoid too much noise and slow convergence at the cost of accuracy.",
+              range=(0, 100, True, False)),
+            S("cycles:integrator:sample_clamp_indirect", "Indirect Light",
+              "If non-zero, the maximum value for an indirect sample, higher values will be "
+              "scaled down to avoid too much noise and slow convergence at the cost of accuracy.",
+              range=(0, 100, True, False)),
+        ], open=True),
+        P("Caustics", [
+            S("cycles:integrator:filter_glossy", "Filter Glossy",
+              "Adaptively blur glossy shaders after blurry bounces, to reduce noise at the cost "
+              "of accuracy.",
+              range=(0, 10, True, False)),
+            S("cycles:integrator:caustics_reflective", "Reflective",
+              "Use reflective caustics, resulting in a brighter image (more noise but added "
+              "realism)."),
+            S("cycles:integrator:caustics_refractive", "Refractive",
+              "Use refractive caustics, resulting in a brighter image (more noise but added "
+              "realism)."),
+        ], open=True),
+        P("Fast GI Approximation", [
+            S("cycles:integrator:ao_bounces", "Bounces",
+              "After this number of light bounces, use approximate global illumination. "
+              "0 disables the approximation, which also needs a non-zero AO Factor.",
+              range=(0, 16, True, False)),
+            S("cycles:integrator:ao_factor", "AO Factor",
+              "Factor for the approximate global illumination replacing the indirect light "
+              "(Replace method). 0 disables the approximation.",
+              range=(0, 1, True, False)),
+            S("cycles:integrator:ao_additive_factor", "AO Additive Factor",
+              "Factor for the approximate global illumination added to the indirect light "
+              "(Add method).",
+              range=(0, 1, True, False)),
+            S("cycles:integrator:ao_distance", "AO Distance",
+              "Distance from shading point to trace rays for the approximation.",
+              range=(0, 100, True, False)),
+        ]),
     ]),
-    ("Sampling", [
-        S("cycles:samples", "Max Samples",
-          "Number of samples to render for each pixel.",
-          range=(1, 4096, True, False), viewport=True),
-        S("cycles:time_limit", "Time Limit",
-          "Limit the render time in seconds, excluding synchronization time. 0 disables the limit.",
-          range=(0, 600, True, False)),
-        S("cycles:integrator:use_adaptive_sampling", "Adaptive Sampling",
-          "Automatically reduce the number of samples per pixel based on estimated noise level.",
-          viewport=True),
-        S("cycles:integrator:adaptive_threshold", "Noise Threshold",
-          "Noise level step to stop sampling at, lower values reduce noise at the cost of "
-          "render time. 0 for automatic setting based on the number of samples.",
-          range=(0, 1, True, True), viewport=True),
-        S("cycles:integrator:adaptive_min_samples", "Min Samples",
-          "Minimum number of samples before adaptive sampling stops a pixel. 0 for automatic "
-          "setting based on the noise threshold.",
-          range=(0, 4096, True, False)),
-    ]),
-    ("Denoising", [
-        S("cycles:integrator:use_denoise", "Denoise",
-          "Denoise the rendered image.",
-          viewport=True, toolbar_icon="VIEW_display_denoise"),
-        S("cycles:integrator:denoiser_type", "Denoiser",
-          "Denoiser to use. OptiX requires an NVIDIA GPU.",
-          viewport=True),
-        S("cycles:integrator:denoiser_prefilter", "Prefilter",
-          "Prefilter of the guiding passes (albedo and normal). Accurate gives the best detail, "
-          "None should only be used when the guiding passes are noise free."),
-        S("cycles:integrator:denoiser_quality", "Quality",
-          "Quality of the OpenImageDenoise denoiser, balanced and fast trade quality for speed."),
-        S("cycles:integrator:denoise_use_gpu", "Use GPU",
-          "Run the denoiser on the GPU when available."),
-        S("cycles:integrator:denoise_start_sample", "Start Sample",
-          "Sample to start denoising the interactive render at.",
-          range=(0, 64, True, False), viewport=True),
-    ]),
-    ("Advanced Sampling", [
-        S("cycles:integrator:seed", "Seed",
-          "Seed value for the random number generator, to get different noise patterns.",
-          range=(0, 100, True, False)),
-        S("cycles:sample_offset", "Sample Offset",
-          "Number of samples to skip when starting the render.",
-          range=(0, 4096, True, False)),
-        S("cycles:integrator:sampling_pattern", "Pattern",
-          "Random sampling pattern used by the integrator."),
-        S("cycles:integrator:scrambling_distance", "Scrambling Distance",
-          "Reduce the randomization between pixels to improve GPU rendering performance, at "
-          "the cost of possible rendering artifacts if set too low.",
-          range=(0, 1, True, True)),
-        S("cycles:integrator:min_bounce", "Min Light Bounces",
-          "Minimum number of light bounces. Setting this higher reduces noise in the first "
-          "bounces, but can also be less efficient for more complex geometry like hair.",
-          range=(0, 32, True, False)),
-        S("cycles:integrator:transparent_min_bounce", "Min Transparent Bounces",
-          "Minimum number of transparent bounces. Setting this higher reduces noise in the "
-          "first bounces, but can also be less efficient for more complex geometry like hair.",
-          range=(0, 32, True, False)),
-        S("cycles:integrator:use_light_tree", "Light Tree",
-          "Sample multiple lights more efficiently based on estimated contribution at every "
-          "shading point."),
-        S("cycles:integrator:light_sampling_threshold", "Light Threshold",
-          "Probabilistically terminate light samples when the light contribution is below "
-          "this threshold (more noise but faster rendering). 0 disables the test.",
-          range=(0, 1, True, False)),
-    ]),
-    ("Path Guiding", [
-        S("cycles:integrator:use_guiding", "Path Guiding",
-          "Use path guiding for sampling paths. Path guiding incrementally learns the light "
-          "distribution of the scene and guides paths into directions with high direct and "
-          "indirect light contributions. Only supported on the CPU."),
-        S("cycles:integrator:guiding_training_samples", "Training Samples",
-          "The maximum number of samples used for training path guiding. 0 trains for all samples.",
-          range=(0, 1024, True, False)),
-        S("cycles:integrator:use_surface_guiding", "Surface Guiding",
-          "Use guiding when sampling directions on a surface."),
-        S("cycles:integrator:use_volume_guiding", "Volume Guiding",
-          "Use guiding when sampling directions inside a volume."),
-    ]),
-    ("Light Paths", [
-        S("cycles:integrator:max_bounce", "Total Bounces",
-          "Total maximum number of bounces.",
-          range=(0, 32, True, False), viewport=True),
-        S("cycles:integrator:max_diffuse_bounce", "Diffuse Bounces",
-          "Maximum number of diffuse reflection bounces, bounded by total maximum.",
-          range=(0, 32, True, False), viewport=True),
-        S("cycles:integrator:max_glossy_bounce", "Glossy Bounces",
-          "Maximum number of glossy reflection bounces, bounded by total maximum.",
-          range=(0, 32, True, False), viewport=True),
-        S("cycles:integrator:max_transmission_bounce", "Transmission Bounces",
-          "Maximum number of transmission bounces, bounded by total maximum.",
-          range=(0, 32, True, False), viewport=True),
-        S("cycles:integrator:max_volume_bounce", "Volume Bounces",
-          "Maximum number of volumetric scattering events.",
-          range=(0, 32, True, False), viewport=True),
-        S("cycles:integrator:transparent_max_bounce", "Transparent Bounces",
-          "Maximum number of transparent bounces. This is independent of maximum number of "
-          "other bounces.",
-          range=(0, 32, True, False), viewport=True),
-    ]),
-    ("Clamping", [
-        S("cycles:integrator:sample_clamp_direct", "Direct Light",
-          "If non-zero, the maximum value for a direct sample, higher values will be scaled "
-          "down to avoid too much noise and slow convergence at the cost of accuracy.",
-          range=(0, 100, True, False)),
-        S("cycles:integrator:sample_clamp_indirect", "Indirect Light",
-          "If non-zero, the maximum value for an indirect sample, higher values will be scaled "
-          "down to avoid too much noise and slow convergence at the cost of accuracy.",
-          range=(0, 100, True, False)),
-    ]),
-    ("Caustics", [
-        S("cycles:integrator:filter_glossy", "Filter Glossy",
-          "Adaptively blur glossy shaders after blurry bounces, to reduce noise at the cost "
-          "of accuracy.",
-          range=(0, 10, True, False)),
-        S("cycles:integrator:caustics_reflective", "Reflective Caustics",
-          "Use reflective caustics, resulting in a brighter image (more noise but added realism)."),
-        S("cycles:integrator:caustics_refractive", "Refractive Caustics",
-          "Use refractive caustics, resulting in a brighter image (more noise but added realism)."),
-    ]),
-    ("Volumes", [
+    P("Volumes", [
         S("cycles:integrator:volume_ray_marching", "Biased",
           "Use the biased ray marching volume rendering instead of the unbiased null "
           "scattering method."),
@@ -241,25 +287,39 @@ LAYOUT = [
           range=(2, 65536, True, False),
           hidewhen="{ cycles:integrator:volume_ray_marching == 0 }"),
     ]),
-    ("Film", [
+    P("Film", [
         S("cycles:film:exposure", "Exposure",
           "Image brightness scale.",
           range=(0, 10, True, False)),
-        S("cycles:film:filter_type", "Pixel Filter",
-          "Pixel filter type."),
-        S("cycles:film:filter_width", "Filter Width",
-          "Pixel filter width.",
-          range=(0.01, 10, True, False)),
-        S("cycles:background:transparent", "Transparent",
-          "World background is transparent, for compositing the render over another "
-          "background. When not set, the background is transparent unless the scene has a "
-          "dome light."),
-        S("cycles:background:transparent_glass", "Transparent Glass",
-          "Render transmissive surfaces as transparent, for compositing glass over another "
-          "background."),
-        S("cycles:background:transparent_roughness_threshold", "Roughness Threshold",
-          "For transparent transmission, keep surfaces with roughness above the threshold opaque.",
-          range=(0, 1, True, True)),
+        P("Pixel Filter", [
+            S("cycles:film:filter_type", "Type",
+              "Pixel filter type."),
+            S("cycles:film:filter_width", "Width",
+              "Pixel filter width.",
+              range=(0.01, 10, True, False),
+              hidewhen="{ cycles:film:filter_type == box }"),
+        ], open=True),
+        P("Transparent", [
+            S("cycles:background:transparent", "Transparent",
+              "World background is transparent, for compositing the render over another "
+              "background. When not set, the background is transparent unless the scene has a "
+              "dome light."),
+            S("cycles:background:transparent_glass", "Transparent Glass",
+              "Render transmissive surfaces as transparent, for compositing glass over another "
+              "background."),
+            S("cycles:background:transparent_roughness_threshold", "Roughness Threshold",
+              "For transparent transmission, keep surfaces with roughness above the threshold "
+              "opaque.",
+              range=(0, 1, True, True),
+              disablewhen="{ cycles:background:transparent_glass == 0 }"),
+        ], open=True, toggle="cycles:background:transparent"),
+    ]),
+    P("Performance", [
+        P("Threads", [
+            S("cycles:threads", "Threads",
+              "Number of CPU threads to use. 0 uses all cores.",
+              range=(0, 64, True, False)),
+        ], open=True),
     ]),
 ]
 
@@ -270,6 +330,15 @@ TYPES = {
     "float": ("float", "float", "float"),
     "menu": ("token", "string", "string"),
 }
+
+
+def settings(items=LAYOUT):
+    """All settings in the layout, depth first."""
+    for item in items:
+        if "panel" in item:
+            yield from settings(item["items"])
+        else:
+            yield item
 
 
 def load_sockets(json_path):
@@ -297,11 +366,11 @@ def format_value(value):
     return str(value)
 
 
-def encode_condition(condition):
+def encode_condition(condition, encode):
     """Encode the setting names in a disable/hide condition as parameter names."""
     tokens = []
     for token in condition.split():
-        tokens.append(hou.text.encodeParm(token) if token.startswith("cycles:") else token)
+        tokens.append(encode(token) if token.startswith("cycles:") else token)
     return " ".join(tokens)
 
 
@@ -317,104 +386,159 @@ def menu_items(setting, socket):
     return socket["enum_values"]
 
 
-def write_parm(lines, setting, socket, section, scope, with_control):
-    usd_type, parm_type, control_type = TYPES[socket["type"]]
-    name = setting["name"]
-    parm_name = hou.text.encodeParm(name)
-    control_name = hou.text.encodeParm(name + "_control")
+def encode_parm(name):
+    return hou.text.encodeParm(name)
 
-    if with_control:
-        lines += [
-            "        parm {",
-            "            name    %s" % quote(control_name),
-            "            label   %s" % quote(setting["label"]),
-            "            type    string",
-            '            default { "none" }',
-            "            menujoin {",
-            '                [ "import loputils" ]',
-            "                [ \"return loputils.createEditPropertiesControlMenu(kwargs, '%s')\" ]"
-            % control_type,
-            "                language python",
-            "            }",
-            '            parmtag { "sidefx::look" "icon" }',
+
+class Writer:
+    """Writes the layout as a dialog script.
+
+    mode is "global" (Render Settings LOP tab, with Edit Properties controls), "viewport"
+    (viewport display options) or "lop" (Cycles Render Settings LOP parameters, always authored).
+    """
+
+    def __init__(self, sockets, mode, encode=encode_parm):
+        self.sockets = sockets
+        self.mode = mode
+        self.encode = encode
+        self.lines = []
+
+    def include(self, setting):
+        return self.mode != "viewport" or setting["viewport"]
+
+    def has_settings(self, panel):
+        return any(self.include(s) for s in settings(panel["items"]))
+
+    def write_panel(self, panel, depth, parent_conditions):
+        indent = "    " * depth
+        name = panel["panel"]
+        self.lines += [
+            "",
+            indent + "groupcollapsible {",
+            indent + "    name    %s" % quote(
+                "cycles_" + name.lower().replace(" ", "_").replace("-", "_") + "_%d" % depth),
+            indent + "    label   %s" % quote(name),
         ]
-        if setting["hidewhen"]:
-            lines.append("            hidewhen %s" % quote(encode_condition(setting["hidewhen"])))
-        lines.append("        }")
+        if panel["open"]:
+            self.lines.append(indent + '    grouptag { "group_default" "1" }')
+        # Everything in a panel with a header toggle is disabled when the toggle is off.
+        conditions = list(parent_conditions)
+        if panel["toggle"]:
+            conditions.append("{ %s == 0 }" % panel["toggle"])
+        for item in panel["items"]:
+            if "panel" in item:
+                if self.has_settings(item):
+                    self.write_panel(item, depth + 1, conditions)
+                continue
+            if not self.include(item):
+                continue
+            is_toggle = item["name"] == panel["toggle"]
+            self.write_parm(item, name, depth + 1,
+                            parent_conditions if is_toggle else conditions)
+        self.lines.append(indent + "}")
 
-    lines += [
-        "        parm {",
-        "            name    %s" % quote(parm_name),
-        "            label   %s" % quote(setting["label"]),
-        "            type    %s" % parm_type,
-        "            size    1",
-        "            default { %s }" % format_value(socket["default"]),
-    ]
-    if setting["range"]:
-        low, high, low_strict, high_strict = setting["range"]
-        lines.append("            range   { %s%s %s%s }" % (
-            low, "!" if low_strict else "", high, "!" if high_strict else ""))
-    if socket["type"] == "menu":
-        lines.append("            menu {")
-        for token, label in menu_items(setting, socket).items():
-            lines.append("                %s %s" % (quote(token), quote(label)))
-        lines.append("            }")
-    lines.append("            help    %s" % quote(setting["help"]))
-    lines.append('            parmtag { "spare_category" %s }' % quote(section))
-    lines.append('            parmtag { "uiscope" %s }' % quote(scope))
-    lines.append('            parmtag { "usdvaluetype" %s }' % quote(usd_type))
-    if setting["toolbar_icon"] and scope != "None":
-        lines.append('            parmtag { "uiicon" %s }' % setting["toolbar_icon"])
-    if with_control:
-        lines.append("            disablewhen %s" % quote(
-            "{ %s == block } { %s == none }" % (control_name, control_name)))
-    if setting["hidewhen"]:
-        lines.append("            hidewhen %s" % quote(encode_condition(setting["hidewhen"])))
-    lines.append("        }")
+    def write_parm(self, setting, section, depth, disable_conditions):
+        socket = self.sockets.get(setting["name"])
+        if socket is None:
+            raise RuntimeError("Setting %s not found in render_settings.json" % setting["name"])
+        usd_type, parm_type, control_type = TYPES[socket["type"]]
+        name = setting["name"]
+        parm_name = self.encode(name)
+        control_name = self.encode(name + "_control")
+        with_control = self.mode == "global"
+        indent = "    " * depth
+        lines = self.lines
+
+        if self.mode == "viewport":
+            scope = "viewport toolbar" if setting["toolbar_icon"] else "viewport"
+        else:
+            scope = "None"
+
+        if with_control:
+            lines += [
+                indent + "parm {",
+                indent + "    name    %s" % quote(control_name),
+                indent + "    label   %s" % quote(setting["label"]),
+                indent + "    type    string",
+                indent + '    default { "none" }',
+                indent + "    menujoin {",
+                indent + '        [ "import loputils" ]',
+                indent + "        [ \"return loputils.createEditPropertiesControlMenu(kwargs, "
+                "'%s')\" ]" % control_type,
+                indent + "        language python",
+                indent + "    }",
+                indent + '    parmtag { "sidefx::look" "icon" }',
+            ]
+            if setting["hidewhen"]:
+                lines.append(indent + "    hidewhen %s" % quote(
+                    encode_condition(setting["hidewhen"], self.encode)))
+            lines.append(indent + "}")
+
+        lines += [
+            indent + "parm {",
+            indent + "    name    %s" % quote(parm_name),
+            indent + "    label   %s" % quote(setting["label"]),
+            indent + "    type    %s" % parm_type,
+            indent + "    size    1",
+            indent + "    default { %s }" % format_value(socket["default"]),
+        ]
+        if setting["range"]:
+            low, high, low_strict, high_strict = setting["range"]
+            lines.append(indent + "    range   { %s%s %s%s }" % (
+                low, "!" if low_strict else "", high, "!" if high_strict else ""))
+        if socket["type"] == "menu":
+            lines.append(indent + "    menu {")
+            for token, label in menu_items(setting, socket).items():
+                lines.append(indent + "        %s %s" % (quote(token), quote(label)))
+            lines.append(indent + "    }")
+        lines.append(indent + "    help    %s" % quote(setting["help"]))
+        if self.mode != "lop":
+            lines.append(indent + '    parmtag { "spare_category" %s }' % quote(section))
+            lines.append(indent + '    parmtag { "uiscope" %s }' % quote(scope))
+            lines.append(indent + '    parmtag { "usdvaluetype" %s }' % quote(usd_type))
+        if setting["toolbar_icon"] and scope != "None":
+            lines.append(indent + '    parmtag { "uiicon" %s }' % setting["toolbar_icon"])
+        disable = []
+        if with_control:
+            disable.append("{ %s == block } { %s == none }" % (control_name, control_name))
+        disable += disable_conditions
+        if setting["disablewhen"]:
+            disable.append(setting["disablewhen"])
+        if disable:
+            lines.append(indent + "    disablewhen %s" % quote(
+                encode_condition(" ".join(disable), self.encode)))
+        if setting["hidewhen"]:
+            lines.append(indent + "    hidewhen %s" % quote(
+                encode_condition(setting["hidewhen"], self.encode)))
+        lines.append(indent + "}")
+
+    def generate(self):
+        lines = self.lines
+        if self.mode == "lop":
+            lines += ["{", '    name    "cycles"', '    label   "Cycles"']
+        else:
+            lines += [
+                "/// Automatically generated by rendersettings2ds.py, do not edit.",
+                "/// %s for the Cycles render delegate." % (
+                    "Viewport display options" if self.mode == "viewport" else "Render settings"),
+                "",
+                '#include "$HFS/houdini/soho/parameters/CommonMacros.ds"',
+                "",
+                "{",
+                '    name    "cycles"',
+                '    label   "Cycles"',
+                '    parmtag { spare_opfilter "!!SHOP/PROPERTIES!!" }',
+                '    parmtag { spare_classtags "render" }',
+            ]
+        for panel in LAYOUT:
+            if self.has_settings(panel):
+                self.write_panel(panel, 1, [])
+        lines += ["}", ""]
+        return "\n".join(lines)
 
 
 def generate(sockets, viewport):
-    lines = [
-        "/// Automatically generated by rendersettings2ds.py, do not edit.",
-        "/// %s for the Cycles render delegate." % (
-            "Viewport display options" if viewport else "Render settings"),
-        "",
-        '#include "$HFS/houdini/soho/parameters/CommonMacros.ds"',
-        "",
-        "{",
-        '    name    "cycles"',
-        '    label   "Cycles"',
-        '    parmtag { spare_opfilter "!!SHOP/PROPERTIES!!" }',
-        '    parmtag { spare_classtags "render" }',
-    ]
-
-    for section, settings in LAYOUT:
-        if viewport:
-            settings = [setting for setting in settings if setting["viewport"]]
-        if not settings:
-            continue
-
-        lines += [
-            "",
-            "    groupcollapsible {",
-            "        name    %s" % quote("cycles_" + section.lower().replace(" ", "_")),
-            "        label   %s" % quote(section),
-            '        grouptag { "group_default" "1" }',
-        ]
-        for setting in settings:
-            socket = sockets.get(setting["name"])
-            if socket is None:
-                raise RuntimeError("Setting %s not found in render_settings.json" %
-                                   setting["name"])
-            if viewport:
-                scope = "viewport toolbar" if setting["toolbar_icon"] else "viewport"
-            else:
-                scope = "None"
-            write_parm(lines, setting, socket, section, scope, with_control=not viewport)
-        lines.append("    }")
-
-    lines += ["}", ""]
-    return "\n".join(lines)
+    return Writer(sockets, "viewport" if viewport else "global").generate()
 
 
 def main():
