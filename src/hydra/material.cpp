@@ -725,6 +725,11 @@ unique_ptr<ShaderGraph> HdCyclesMaterial::BuildShaderGraph(HdMaterialNetworkSche
     {
       inputName = outputName = "Volume";
     }
+    else {
+      /* Other terminals only pull nodes into the network, like an AOV Output node, which
+       * writes its pass without being linked to the material output. */
+      continue;
+    }
 
     /* For native Cycles nodes we use the upstream output name as is, for
      * mapping from e.g. UsdPreviewSurface we need to use the default output

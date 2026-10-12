@@ -6,6 +6,7 @@
 #pragma once
 
 #include "hydra/config.h"
+#include "scene/pass.h"
 #include "util/thread.h"
 
 #include <pxr/imaging/hd/renderDelegate.h>
@@ -31,6 +32,9 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
   ~HdCyclesSession() override;
 
   void UpdateScene();
+
+  // Cycles pass for a Hydra AOV or Cycles pass name, PASS_NONE if there is none
+  static CCL_NS::PassType GetPassType(const PXR_NS::TfToken &aovName);
 
   // Override the automatic background transparency, which depends on presence of a dome light
   void SetTransparentBackground(const std::optional<bool> transparent);

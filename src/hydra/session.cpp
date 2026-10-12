@@ -14,6 +14,8 @@
 #include "scene/shader_nodes.h"
 #include "session/session.h"
 
+#include <pxr/imaging/hd/renderBuffer.h>
+
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
 namespace {
@@ -26,7 +28,45 @@ const std::unordered_map<TfToken, PassType, TfToken::HashFunctor> kAovToPass = {
     {HdAovTokens->instanceId, PASS_AOV_VALUE},
 };
 
+// Hydra AOVs, then Cycles pass names ("diffuse_direct", "mist", ...), then shader AOVs written by
+// the AOV Output node, matched by name.
+PassType AovToPassType(const HdRenderPassAovBinding &aovBinding)
+{
+  const PassType type = HdCyclesSession::GetPassType(aovBinding.aovName);
+  if (type != PASS_NONE) {
+    return type;
+  }
+
+  const string &name = aovBinding.aovName.GetString();
+
+  // Light path expressions and primvars are not supported
+  if (TfStringStartsWith(name, "lpe:") || TfStringStartsWith(name, "primvars:")) {
+    return PASS_NONE;
+  }
+
+  const HdFormat format = aovBinding.renderBuffer ? aovBinding.renderBuffer->GetFormat() :
+                                                    HdFormatInvalid;
+  return HdGetComponentCount(format) == 1 ? PASS_AOV_VALUE : PASS_AOV_COLOR;
+}
+
 }  // namespace
+
+PassType HdCyclesSession::GetPassType(const TfToken &aovName)
+{
+  const auto hydraAov = kAovToPass.find(aovName);
+  if (hydraAov != kAovToPass.end()) {
+    return hydraAov->second;
+  }
+  const NodeEnum *passTypes = Pass::get_type_enum();
+  if (passTypes->exists(ustring(aovName.GetString()))) {
+    const PassType type = PassType((*passTypes)[aovName.GetText()]);
+    // Shader AOV passes need a name of their own, and cryptomatte needs film settings
+    if (type != PASS_AOV_COLOR && type != PASS_AOV_VALUE && type != PASS_CRYPTOMATTE) {
+      return type;
+    }
+  }
+  return PASS_NONE;
+}
 
 SceneLock::SceneLock(const HdRenderParam *renderParam)
     : scene(static_cast<const HdCyclesSession *>(renderParam)->session->scene.get()),
@@ -156,14 +196,12 @@ void HdCyclesSession::SyncAovBindings(const HdRenderPassAovBindingVector &aovBin
   // Update passes with requested AOV bindings
   _aovBindings = aovBindings;
   for (const HdRenderPassAovBinding &aovBinding : aovBindings) {
-    const auto cyclesAov = kAovToPass.find(aovBinding.aovName);
-    if (cyclesAov == kAovToPass.end()) {
-      // TODO: Use PASS_AOV_COLOR and PASS_AOV_VALUE for these?
+    const PassType type = AovToPassType(aovBinding);
+    if (type == PASS_NONE) {
       TF_WARN("Unknown pass %s", aovBinding.aovName.GetText());
       continue;
     }
 
-    const PassType type = cyclesAov->second;
     const PassMode mode = PassMode::DENOISED;
 
     Pass *pass = scene->create_node<Pass>();
