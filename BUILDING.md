@@ -79,6 +79,17 @@ Windows:
     cmake --install build
 ```
 
+To build with NVIDIA GPU (CUDA and OptiX) rendering support, install the CUDA Toolkit and the OptiX SDK
+headers (OptiX 8.0 or newer, for example from https://github.com/NVIDIA/optix-dev), and add these options to
+the configure step:
+
+    -DWITH_CYCLES_CUDA_BINARIES=ON
+    -DOPTIX_ROOT_DIR="<path to OptiX SDK>"
+    -DCYCLES_CUDA_BINARIES_ARCH="sm_75;sm_86;sm_89;sm_120;compute_75"
+
+The GPU device is chosen with the `cycles:device` render setting or the `CYCLES_DEVICE` environment variable,
+for example `CYCLES_DEVICE=OPTIX husk -R Cycles scene.usd`.
+
 The path to Houdini depends on the operating system, typically:
 - Linux: `/opt/hfsX.Y`
 - macOS: `/Applications/Houdini/HoudiniX.Y.ZZZ`
