@@ -465,7 +465,17 @@ endif()
 ###########################################################################
 
 if(WITH_CYCLES_EMBREE)
-  if(MSVC AND EXISTS ${_cycles_lib_dir})
+  # Use the precompiled Embree, unless another Embree was specified with EMBREE_ROOT_DIR.
+  # For example a static Embree without SYCL support for Houdini, since the SYCL runtime
+  # libraries required by the precompiled Embree conflict with other Houdini plugins.
+  if(MSVC AND EXISTS ${_cycles_lib_dir} AND
+     (NOT EMBREE_ROOT_DIR OR EMBREE_ROOT_DIR STREQUAL "${_cycles_lib_dir}/embree"))
+    set(_cycles_use_precompiled_embree ON)
+  else()
+    set(_cycles_use_precompiled_embree OFF)
+  endif()
+
+  if(_cycles_use_precompiled_embree)
     set(EMBREE_ROOT_DIR ${_cycles_lib_dir}/embree)
     set(EMBREE_INCLUDE_DIRS ${EMBREE_ROOT_DIR}/include)
     set(EMBREE_MAJOR_VERSION 4)
@@ -498,14 +508,26 @@ if(WITH_CYCLES_EMBREE)
       endif()
     endif()
   else()
+    # Search EMBREE_ROOT_DIR before the precompiled libraries in CMAKE_PREFIX_PATH.
+    set(EMBREE_ROOT ${EMBREE_ROOT_DIR})
     find_package(Embree 3.8.0 REQUIRED)
   endif()
-  
-  if(WIN32)
-    add_bundled_libraries(embree/bin)
-  else()
-    add_bundled_libraries(embree/lib)
+
+  if(HOUDINI_FOUND AND WIN32 AND EMBREE_SYCL_SUPPORT)
+    message(WARNING
+      "Embree with SYCL support depends on the SYCL runtime libraries, which conflict with "
+      "other Houdini plugins that ship their own (e.g. Arnold), and then fail to load. "
+      "Build Embree as a static library without SYCL support and set EMBREE_ROOT_DIR to it.")
   endif()
+
+  if(_cycles_use_precompiled_embree OR NOT EMBREE_STATIC_LIB)
+    if(WIN32)
+      add_bundled_libraries(embree/bin)
+    else()
+      add_bundled_libraries(embree/lib)
+    endif()
+  endif()
+  unset(_cycles_use_precompiled_embree)
 endif()
 
 
@@ -817,8 +839,17 @@ if(WITH_CYCLES_DEVICE_ONEAPI OR EMBREE_SYCL_SUPPORT)
   endif()
 endif()
 
+# The SYCL and Level Zero runtime libraries are only needed by oneAPI and Embree with SYCL support
+# for Houdini, where OpenImageDenoise comes from Houdini. Don't bundle them otherwise, as they
+# conflict with the ones shipped by other Houdini plugins.
+if(HOUDINI_FOUND AND NOT (WITH_CYCLES_DEVICE_ONEAPI OR EMBREE_SYCL_SUPPORT))
+  set(_cycles_bundle_sycl OFF)
+else()
+  set(_cycles_bundle_sycl ON)
+endif()
+
 # add_bundled_libraries for SYCL, but custom since we need to filter the files.
-if(DEFINED SYCL_ROOT_DIR)
+if(DEFINED SYCL_ROOT_DIR AND _cycles_bundle_sycl)
   if(WIN32)
     set(_sycl_library_dir ${SYCL_ROOT_DIR}/bin)
     file(GLOB _sycl_runtime_libraries
@@ -856,7 +887,7 @@ if(DEFINED SYCL_ROOT_DIR)
   unset(_sycl_runtime_libraries)
 endif()
 
-if(WIN32 AND DEFINED LEVEL_ZERO_ROOT_DIR)
+if(WIN32 AND DEFINED LEVEL_ZERO_ROOT_DIR AND _cycles_bundle_sycl)
   file(GLOB _ze_runtime_libraries ${LEVEL_ZERO_ROOT_DIR}/bin/*.dll)
   foreach(_bundled_lib ${_ze_runtime_libraries})
     if(${_bundled_lib} MATCHES "_d.dll$")
@@ -867,6 +898,7 @@ if(WIN32 AND DEFINED LEVEL_ZERO_ROOT_DIR)
   endforeach()
   unset(_ze_runtime_libraries)
 endif()
+unset(_cycles_bundle_sycl)
 
 if(WITH_CYCLES_DEVICE_ONEAPI AND WITH_CYCLES_ONEAPI_BINARIES)
   # Centralized place for ocloc usage initialization
