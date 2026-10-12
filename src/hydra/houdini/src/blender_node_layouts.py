@@ -11,8 +11,8 @@ Run inside Blender:
 
 For every Blender shader node this writes the node label, the node properties (menus and options
 drawn on the node) and input sockets in the order Blender draws them, the panels they are in,
-their defaults, soft and hard ranges, and for every input the menu values for which Blender hides
-it. The output is keyed by Blender node type; shader2hda.py maps it to the Cycles nodes.
+their defaults, soft and hard ranges, for every input the menu values for which Blender hides
+it, and the Add menu path of every node. The output is keyed by Blender node type; shader2hda.py maps it to the Cycles nodes.
 
 The Python API only gives the generic range of a socket type (-10000 to 10000, or 0 to 1 for
 factors), not the min and max a node declares for its socket (IOR 1 to 1000). Those are read from
@@ -356,6 +356,23 @@ def reduce_conditions(conditions, node, props, fixed):
     return [dict(c) for c in sorted(all_combinations)]
 
 
+def menu_paths():
+    """Blender node type -> Add menu path ("Utilities/Math"), parsed from the menu classes."""
+    import bl_ui.node_add_menu_shader as menu_module
+    with open(menu_module.__file__, encoding="utf-8") as f:
+        text = f.read()
+    menus = {}
+    for block in re.split(r"\nclass ", text)[1:]:
+        label = re.search(r'bl_label = "([^"]*)"', block)
+        path = re.search(r'menu_path = "([^"]*)"', block)
+        path = path.group(1) if path else (label.group(1) if label else "")
+        if not path or path == "Root":
+            continue
+        for idname in re.findall(r'"(ShaderNode\w+)"', block):
+            menus.setdefault(idname, path)
+    return menus
+
+
 def main():
     args = sys.argv[sys.argv.index("--") + 1:]
     if len(args) != 2:
@@ -387,7 +404,7 @@ def main():
 
     with open(out_path, "w", newline="\n") as f:
         json.dump({"blender_version": bpy.app.version_string, "nodes": nodes,
-                   "variants": variants}, f, indent=1, sort_keys=True)
+                   "variants": variants, "menus": menu_paths()}, f, indent=1, sort_keys=True)
         f.write("\n")
     print("Wrote %d nodes and %d variants to %s" % (len(nodes), len(variants), out_path))
 

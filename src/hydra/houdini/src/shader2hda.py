@@ -297,7 +297,7 @@ def create_hda(node_data, install_dir, layouts, problems):
 
     shader_hda.setShaderType("generic")
     shader_hda.setToolKeywords(["cycles"])
-    shader_hda.setTabSubMenus(["Cycles"])
+    shader_hda.setTabSubMenus([blender_layout.tab_menu(node_data, layouts)])
 
     signature = create_shader_signature(node_data, shader_name, label, params)
     shader_hda.signatureSet().addSignature(signature)

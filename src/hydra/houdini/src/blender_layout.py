@@ -123,6 +123,26 @@ def find_blender_node(cycles_node, layouts):
     return None
 
 
+# Blender puts the variants of one node in different Add menus.
+VARIANT_MENUS = {
+    "mix_float": "Utilities/Math",
+    "map_range": "Utilities/Math",
+    "mix_color": "Color",
+    "mix_vector": "Utilities/Vector",
+    "mix_vector_non_uniform": "Utilities/Vector",
+    "vector_map_range": "Utilities/Vector",
+}
+
+
+def tab_menu(cycles_node, layouts):
+    """Tab menu path of a Cycles node, following Blender's Add menu ("Cycles/Utilities/Math")."""
+    path = VARIANT_MENUS.get(cycles_node["name"])
+    if not path and layouts:
+        layout = find_blender_node(cycles_node, layouts)
+        path = layouts.get("menus", {}).get(layout["blender_idname"]) if layout else None
+    return "Cycles/" + path if path else "Cycles"
+
+
 def find_socket(cycles_node, item, sockets):
     """Cycles socket for a Blender layout item, or None."""
     aliases = dict(ALIASES["*"])
