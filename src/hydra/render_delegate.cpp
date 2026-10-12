@@ -10,6 +10,9 @@
 #include "hydra/instancer.h"
 #include "hydra/light.h"
 #include "hydra/material.h"
+#ifdef WITH_HYDRA_MATERIALX
+#  include "hydra/materialx.h"
+#endif
 #include "hydra/mesh.h"
 #include "hydra/node_util.h"
 #include "hydra/pointcloud.h"
@@ -376,7 +379,11 @@ TfToken HdCyclesDelegate::GetMaterialBindingPurpose() const
 
 TfTokenVector HdCyclesDelegate::GetMaterialRenderContexts() const
 {
-  return {_tokens->cycles};
+  TfTokenVector contexts = {_tokens->cycles};
+#ifdef WITH_HYDRA_MATERIALX
+  contexts.insert(contexts.end(), MaterialXRenderContexts().begin(), MaterialXRenderContexts().end());
+#endif
+  return contexts;
 }
 
 VtDictionary HdCyclesDelegate::GetRenderStats() const

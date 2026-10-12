@@ -4,6 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0 */
 
 #include "hydra/material.h"
+#ifdef WITH_HYDRA_MATERIALX
+#  include "hydra/materialx.h"
+#endif
 #include "hydra/node_util.h"
 #include "hydra/session.h"
 #include "hydra/util.h"
@@ -416,11 +419,21 @@ void HdCyclesMaterial::Sync(HdSceneDelegate *sceneDelegate,
     const HdContainerDataSourceHandle &primDs = prim.dataSource;
 
     HdMaterialSchema matSchema = HdMaterialSchema::GetFromParent(primDs);
-    /* Prefer cycles network if it exists, otherwise use universal network. */
+    /* Prefer cycles network if it exists, then MaterialX, otherwise use universal network. */
     HdMaterialNetworkSchema network = matSchema.GetMaterialNetwork(CyclesMaterialTokens->cycles);
+#ifdef WITH_HYDRA_MATERIALX
+    for (const TfToken &context : MaterialXRenderContexts()) {
+      if (!network) {
+        network = matSchema.GetMaterialNetwork(context);
+      }
+    }
+#endif
     if (!network) {
       network = matSchema.GetMaterialNetwork();
     }
+#ifdef WITH_HYDRA_MATERIALX
+    const bool isMaterialX = network && IsMaterialXNetwork(network);
+#endif
 
     const SceneLock lock(renderParam);
 
@@ -434,7 +447,17 @@ void HdCyclesMaterial::Sync(HdSceneDelegate *sceneDelegate,
         TF_WARN("Could not get a material network for %s.", id.GetText());
       }
       else {
-        graph = BuildShaderGraph(network);
+#ifdef WITH_HYDRA_MATERIALX
+        if (isMaterialX) {
+          /* Always rebuilt, parameter updates need the whole network. */
+          _nodes.clear();
+          graph = BuildMaterialXShaderGraph(id, network, primDs);
+        }
+        else
+#endif
+        {
+          graph = BuildShaderGraph(network);
+        }
         if (!graph) {
           TF_WARN("Could not build a shader graph for %s.", id.GetText());
         }
