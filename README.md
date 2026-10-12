@@ -8,8 +8,9 @@ Blender, and Blender-style render settings.
 This is a fork of [cjhosken/hdCycles](https://projects.blender.org/cjhosken/hdCycles) (itself based on Blender's
 Cycles repository). The work for Houdini 22 lives on the `houdini-22` branch.
 
-> **Status: work in progress.** Daily lookdev with Cycles shaders and USD lights works. Volumes, most AOVs,
-> implicit USD shapes and Karma/MaterialX materials do **not** work yet; see [Known issues](#known-issues).
+> **Status: work in progress.** Daily lookdev with Cycles shaders, USD lights and VDB volumes works. Most AOVs,
+> native Houdini volumes, implicit USD shapes and Karma/MaterialX materials do **not** work yet; see
+> [Known issues](#known-issues).
 
 ## Tested with
 
@@ -36,11 +37,12 @@ Linux and macOS builds have not been tested on Houdini 22.
 | Viewport | Free view and looking through a camera |
 | Stability | No crash on quit, renderer switch or device change |
 | Units | Stages with `metersPerUnit` 1 and 0.01 |
+| Volumes | VDB files and VDB volumes made in SOPs inside a LOP stage; volumes without a material show their density |
 
 ## Known issues
 
 ### Rendering
-- **Volumes don't render.**
+- **Native Houdini volumes** (not VDB) don't render yet; convert them with a Convert VDB SOP.
 - **Only 5 AOVs work:** color, depth, normal, primId, instanceId. Light passes (diffuse/glossy/transmission,
   emission, environment, AO, shadow), data passes (position, UV, vector, mist, ...), cryptomatte, shader AOVs
   and light path expressions are missing, and there is no AOV UI yet.
@@ -71,7 +73,7 @@ Linux and macOS builds have not been tested on Houdini 22.
 Roughly in this order:
 
 1. Fix the orbit jump (depth AOV).
-2. Volumes.
+2. Native Houdini volumes.
 3. Shader node ports, Tab menu sub-menus, Render Settings LOP touch-ups, node defaults, ramps and degrees.
 4. AOVs: Cycles passes, cryptomatte, shader AOVs, an AOV UI, multi-AOV EXR output from husk.
 5. Implicit USD shapes.
@@ -148,6 +150,8 @@ node generator is ported from that repository's `shaders` branch, by Christopher
 | **Crash on teardown** when quitting Houdini, switching renderer or changing device: OpenGL objects were deleted without a context. A fence leaked on every display update. | `576f64f74` |
 | **Moving or rotating a light** did not update the render (the object was not tagged for update). | `379ba058f` |
 | **Frozen, squashed viewport image when looking through a camera.** Houdini binds buffers the size of the viewer but sets the viewport to the camera gate. The delegate now renders at the buffer size and conforms the camera aspect. | `ac7c0f2fc` |
+| **Volumes without a material rendered nothing** (they got the default surface shader). They now get Cycles' default volume shader, which shows the density like Karma. | `2b69b0a9a` |
+| **Volumes made in SOPs failed to load** ("could not open file op:/stage/..."). Houdini passes these as `op:` paths, not files. The delegate now gets the grids from Houdini through `USD_SopVol` (`SOPgetVDBVolumePrimitive`), sharing them instead of copying. This needs the Houdini SDK headers and `libGEO`/`libUT`/`libCE`, so it is only built for Houdini (`houdini_volume.cpp`). | `0c125583d` |
 
 ### Render delegate features
 
@@ -191,7 +195,9 @@ src/hydra/houdini/
   src/cyclesrendersettings2hda.py   Cycles Render Settings LOP
 ```
 
-Modified upstream files: `src/hydra/{camera,display_driver,light,material,render_delegate,render_pass,session}`,
+New Houdini-only source: `src/hydra/houdini_volume.{h,cpp}` (volumes from SOPs).
+
+Modified upstream files: `src/hydra/{camera,display_driver,field,geometry.inl,light,material,render_delegate,render_pass,session}`,
 `src/hydra/CMakeLists.txt`, `src/cmake/external_libs.cmake`, `src/cmake/Modules/FindUSDHoudini.cmake`,
 `src/scene/shader_nodes.cpp`, `BUILDING.md`, `README.md`.
 
