@@ -264,7 +264,7 @@ const char *ColorSpaceManager::colorspace_interop_id(ustring colorspace)
                                    "srgb_p3d65_scene",
                                    "g22_adobergb_scene"};
       for (const char *interop_id : interop_ids) {
-#  if OCIO_VERSION_MAJOR == 2 && OCIO_VERSION_MINOR == 2
+#  if OCIO_VERSION_HEX < 0x02040000
         for (int i = 0; i < space->getNumAliases(); i++) {
           if (strcmp(space->getAlias(i), interop_id) == 0) {
             return interop_id;
@@ -307,7 +307,7 @@ ustring ColorSpaceManager::detect_known_colorspace(ustring colorspace,
       colorspace = file_colorspace;
     }
     else {
-#  if OCIO_VERSION_MAJOR == 2 && OCIO_VERSION_MINOR == 2
+#  if OCIO_VERSION_HEX < 0x02040000
       int default_float_id = 0;
       int default_byte_id = 0;
       int default_id = 0;
