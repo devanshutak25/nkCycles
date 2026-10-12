@@ -233,9 +233,14 @@ void HdCyclesCamera::ApplyCameraSettings(HdRenderParam *renderParam,
   cam->set_viewplane_bottom(viewplane.GetMin()[1]);
   cam->set_viewplane_top(viewplane.GetMax()[1]);
 
-  if (data.GetFStop() != 0.0f) {
+  /* No depth of field without a focus distance: focusing at the lens blurs everything away
+   * (Nuke cameras author an f-stop but leave the focus distance at its fallback of 0). */
+  if (data.GetFStop() != 0.0f && data.GetFocusDistance() > 0.0f) {
     cam->set_focaldistance(data.GetFocusDistance() * metersPerUnit);
     cam->set_aperturesize(focalLength / (2.0f * data.GetFStop()));
+  }
+  else {
+    cam->set_aperturesize(0.0f);
   }
 
   cam->set_matrix(convert_camera_transform(data.GetTransform(), metersPerUnit));
