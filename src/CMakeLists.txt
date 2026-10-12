@@ -404,6 +404,10 @@ if(WITH_CYCLES_HYDRA_RENDER_DELEGATE OR (WITH_CYCLES_STANDALONE AND WITH_USD))
   add_subdirectory(hydra)
 endif()
 
+if(NUKE_FOUND)
+  add_subdirectory(nuke)
+endif()
+
 if(NOT WITH_BLENDER)
   if(CYCLES_STANDALONE_REPOSITORY)
     delayed_do_install()
