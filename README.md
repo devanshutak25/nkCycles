@@ -46,10 +46,12 @@ Linux and macOS builds have not been tested on Houdini 22.
 ## Known issues
 
 ### Rendering
-- **AOVs:** cryptomatte, light path expressions and primvar AOVs are not supported, and there is no AOV UI yet
+- **AOVs:** there is no AOV UI yet (no pass toggles in the render settings); cryptomatte, light path expressions
+  and primvar AOVs are not supported
   (author render vars by hand: `sourceName` = Cycles pass name). An AOV Output node only reaches the render when
   the material connects it to an output (e.g. `outputs:cycles:aov`); the Cycles Material Builder has no such
   output yet.
+- **MaterialX:** changed image textures do not refresh in the viewport.
 - **MaterialX limits:** noise nodes use Cycles' noise (same character, different pattern); the OpenPBR coat is
   approximated; BSDF layering is an add; matrix nodes, hex tiling, some compositing nodes and MaterialX volumes
   are not supported. Editing a parameter rebuilds the whole shader.
@@ -57,8 +59,9 @@ Linux and macOS builds have not been tested on Houdini 22.
 - The Principled Hair BSDF needs a recheck of OptiX vs CPU output.
 
 ### Viewport
-- The camera sometimes jumps very far from the origin while orbiting. The `depth` AOV is now the 0..1 window
-  depth Hydra expects (it was Cycles' camera distance), which was the most likely cause; not confirmed yet.
+- Orbiting the Cycles viewport behaves like a first-person camera (the pivot is at the camera). The earlier
+  jumps far from the origin are gone since the `depth` AOV became 0..1 window depth; the pivot is likely still
+  read from that depth.
 
 ### UI
 - Port locations are wrong on some shader nodes (the Principled BSDF inputs listed last is fixed).
