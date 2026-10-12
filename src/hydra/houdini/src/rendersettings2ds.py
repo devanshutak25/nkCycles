@@ -77,6 +77,16 @@ MENU_ITEMS = {
         "blue_noise_round": "Blue-Noise (round)",
         "blue_noise_first": "Blue-Noise (first)",
     },
+    "cycles:integrator:guiding_distribution_type": {
+        "PARALLAX_AWARE_VMM": "Parallax-Aware VMM",
+        "DIRECTIONAL_QUAD_TREE": "Directional Quad Tree",
+        "VMM": "VMM",
+    },
+    "cycles:integrator:guiding_directional_sampling_type": {
+        "MIS": "Diffuse Product MIS",
+        "RIS": "Re-sampled Importance Sampling",
+        "ROUGHNESS": "Roughness-based",
+    },
     "cycles:film:filter_type": {
         "box": "Box",
         "gaussian": "Gaussian",
@@ -177,6 +187,30 @@ LAYOUT = [
               "Use guiding when sampling directions on a surface."),
             S("cycles:integrator:use_volume_guiding", "Volume",
               "Use guiding when sampling directions inside a volume."),
+            P("Debug", [
+                S("cycles:integrator:guiding_distribution_type", "Distribution Type",
+                  "Type of representation for the guiding distribution."),
+                S("cycles:integrator:guiding_roughness_threshold", "Roughness Threshold",
+                  "The minimal roughness value of a material to apply guiding.",
+                  range=(0, 1, True, True)),
+                S("cycles:integrator:guiding_directional_sampling_type",
+                  "Directional Sampling Type",
+                  "Type of the directional sampling used for guiding."),
+                S("cycles:integrator:surface_guiding_probability", "Surface Guiding Probability",
+                  "The probability of guiding a direction on a surface.",
+                  range=(0, 1, True, True)),
+                S("cycles:integrator:volume_guiding_probability", "Volume Guiding Probability",
+                  "The probability of guiding a direction inside a volume.",
+                  range=(0, 1, True, True)),
+                S("cycles:integrator:deterministic_guiding", "Deterministic",
+                  "Make path guiding deterministic, which means multiple renders with the same "
+                  "settings and scene give the same result. Rendering may be slower."),
+                S("cycles:integrator:use_guiding_direct_light", "Guide Direct Light",
+                  "Consider the contribution of directly visible light sources during guiding."),
+                S("cycles:integrator:use_guiding_mis_weights", "Use MIS Weights",
+                  "Use the MIS weight to weight the contribution of directly visible light "
+                  "sources during guiding."),
+            ]),
         ], toggle="cycles:integrator:use_guiding"),
         P("Advanced", [
             S("cycles:integrator:sampling_pattern", "Pattern",
@@ -197,9 +231,17 @@ LAYOUT = [
               "first bounces, but can also be less efficient for more complex geometry like "
               "hair.",
               range=(0, 32, True, False)),
-            S("cycles:sample_offset", "Sample Offset",
-              "Number of samples to skip when starting the render.",
-              range=(0, 4096, True, False)),
+            P("Sample Subset", [
+                S("cycles:integrator:use_sample_subset", "Sample Subset",
+                  "Render a subset of the specified max samples. Typically used for distributed "
+                  "rendering across multiple devices."),
+                S("cycles:integrator:sample_subset_offset", "Offset",
+                  "0-based index of sample to start rendering from.",
+                  range=(0, 4096, True, False)),
+                S("cycles:integrator:sample_subset_length", "Length",
+                  "The number of samples to render in this subset.",
+                  range=(1, 4096, True, False)),
+            ], toggle="cycles:integrator:use_sample_subset"),
         ]),
         P("Lights", [
             S("cycles:integrator:use_light_tree", "Light Tree",
@@ -314,6 +356,24 @@ LAYOUT = [
               range=(0, 1, True, True),
               disablewhen="{ cycles:background:transparent_glass == 0 }"),
         ], open=True, toggle="cycles:background:transparent"),
+    ]),
+    P("Passes", [
+        S("cycles:film:pass_alpha_threshold", "Alpha Threshold",
+          "Z, Index, normal, UV and vector passes are only affected by surfaces with alpha "
+          "transparency equal to or higher than this threshold.",
+          range=(0, 1, True, True)),
+        P("Mist Pass", [
+            S("cycles:film:mist_start", "Start",
+              "Starting distance of the mist, measured from the camera.",
+              range=(0, 100, True, False)),
+            S("cycles:film:mist_depth", "Depth",
+              "Distance over which the mist effect fades in.",
+              range=(0, 100, True, False)),
+            S("cycles:film:mist_falloff", "Falloff",
+              "Type of transition used to fade mist (Blender: 1 linear, 2 quadratic, 0.5 inverse "
+              "quadratic).",
+              range=(0, 4, True, False)),
+        ], open=True),
     ]),
     P("Performance", [
         P("Threads", [
