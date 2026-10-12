@@ -174,6 +174,7 @@ AOV_SCRIPT = """import hou
 from pxr import Sdf, Tf, UsdRender
 
 PASSES = %r
+CRYPTOMATTE = %r
 
 top = hou.pwd().parent()
 stage = hou.pwd().editableStage()
@@ -200,6 +201,12 @@ for parm, render_vars in PASSES:
         for render_var in render_vars:
             add_var(*render_var)
 
+levels = top.evalParm("aov_cryptomatte_levels")
+for parm, layer in CRYPTOMATTE:
+    if top.evalParm(parm):
+        for i in range((levels + 1) // 2):
+            add_var("%%s%%02d" %% (layer, i), "%%s%%02d" %% (layer, i), "raw", "color4f")
+
 for i in range(1, top.evalParm("shader_aovs") + 1):
     name = top.evalParm("shader_aov_name%%d" %% i)
     if name:
@@ -215,6 +222,35 @@ if filters:
 """
 
 
+# Cryptomatte layers: (parm, layer name). Each render var holds two ranks of a layer.
+CRYPTOMATTE = [
+    ("aov_cryptomatte_object", "CryptoObject"),
+    ("aov_cryptomatte_material", "CryptoMaterial"),
+    ("aov_cryptomatte_asset", "CryptoAsset"),
+]
+
+
+def cryptomatte_folder():
+    folder = hou.FolderParmTemplate("folder_aov_cryptomatte", "Cryptomatte",
+                                    folder_type=hou.folderType.Collapsible)
+    label = hou.LabelParmTemplate("aov_label_cryptomatte", "Include", column_labels=("",))
+    label.setJoinWithNext(True)
+    folder.addParmTemplate(label)
+    helps = {"CryptoObject": "objects (prim paths)", "CryptoMaterial": "materials (prim paths)",
+             "CryptoAsset": "assets (parent prim paths)"}
+    for i, (parm, layer) in enumerate(CRYPTOMATTE):
+        toggle = hou.ToggleParmTemplate(
+            parm, layer.replace("Crypto", ""), default_value=False,
+            help="Render a Cryptomatte for %s: %s00, %s01, ... render vars." % (
+                helps[layer], layer, layer))
+        toggle.setJoinWithNext(i < len(CRYPTOMATTE) - 1)
+        folder.addParmTemplate(toggle)
+    folder.addParmTemplate(hou.IntParmTemplate(
+        "aov_cryptomatte_levels", "Levels", 1, default_value=(6,), min=2, max=16,
+        help="Number of unique objects, materials or assets per pixel, two per render var."))
+    return folder
+
+
 def aov_passes():
     """(parm, render vars) of every pass toggle."""
     return [(parm, render_vars) for _, rows in AOV_FOLDERS for _, toggles in rows
@@ -224,6 +260,8 @@ def aov_passes():
 def aov_parameters(passes_folder):
     """Add the pass toggles and shader AOVs to the Passes folder."""
     for folder_label, rows in AOV_FOLDERS:
+        if folder_label == "Light Path Expressions":
+            passes_folder.addParmTemplate(cryptomatte_folder())
         folder = hou.FolderParmTemplate(
             "folder_aov_" + folder_label.lower().replace(" ", "_"), folder_label,
             folder_type=hou.folderType.Collapsible)
@@ -289,7 +327,7 @@ def build_contents(subnet, sockets, ds_dir):
 
     aovs = subnet.createNode("pythonscript", "aovs")
     aovs.setInput(0, var)
-    aovs.parm("python").set(AOV_SCRIPT % (aov_passes(),))
+    aovs.parm("python").set(AOV_SCRIPT % (aov_passes(), CRYPTOMATTE))
 
     settings = subnet.createNode("rendersettings", "settings")
     settings.setInput(0, aovs)
