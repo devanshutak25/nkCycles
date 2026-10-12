@@ -123,7 +123,8 @@ def find_blender_node(cycles_node, layouts):
     return None
 
 
-# Blender puts the variants of one node in different Add menus.
+# Blender puts the variants of one node in different Add menus, and some Cycles nodes are not in
+# Blender's Add menu at all (legacy or internal nodes).
 VARIANT_MENUS = {
     "mix_float": "Utilities/Math",
     "map_range": "Utilities/Math",
@@ -131,6 +132,12 @@ VARIANT_MENUS = {
     "mix_vector": "Utilities/Vector",
     "mix_vector_non_uniform": "Utilities/Vector",
     "vector_map_range": "Utilities/Vector",
+    "mix": "Color",
+    "mix_closure_weight": "Shader",
+    # Blender's Add menu has the Glossy BSDF under its old name, the layout under the alias.
+    "glossy_bsdf": "Shader",
+    "scene_time": "Input",
+    "set_normal": "Utilities/Vector",
 }
 
 
