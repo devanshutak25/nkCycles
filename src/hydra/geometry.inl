@@ -93,6 +93,10 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
     if (material && material->GetCyclesShader()) {
       usedShaders[0] = material->GetCyclesShader();
     }
+    else if (_geom->is_volume()) {
+      /* Like Karma and Storm, show volumes without a material by their density. */
+      usedShaders[0] = lock.scene->default_volume;
+    }
     else {
       usedShaders[0] = lock.scene->default_surface;
     }
