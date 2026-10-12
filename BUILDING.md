@@ -123,7 +123,9 @@ Blender's Cycles render properties. Cycles shader nodes are available in the Mat
 USD Cycles Material Builder, laid out like Blender's shader nodes and with Blender's default values.
 
 The shader node layouts come from `src/hydra/houdini/blender_node_layouts.json`. To update it for a new
-Blender version, run `src/hydra/houdini/src/blender_node_layouts.py` in that Blender version (see the script).
+Blender version, run `src/hydra/houdini/src/blender_node_layouts.py` in that Blender version, with
+`source/blender/nodes/shader/nodes` from the Blender source of the same commit for the socket ranges (see the
+script).
 
 ## Build System
 
