@@ -70,9 +70,16 @@ def string_ref(parm_name):
 
 
 def build_contents(subnet, sockets, ds_dir):
-    var = subnet.createNode("rendervar", "color")
-    var.setInput(0, subnet.indirectInputs()[0])
-    var.parm("primpath").set('`chs("../rendervarsparentprimpath")`/color')
+    # Same prims as the Karma Render Settings LOP: Products/renderproduct, then Vars/beauty.
+    product = subnet.createNode("renderproduct", "renderproduct")
+    product.setInput(0, subnet.indirectInputs()[0])
+    product.parm("primpath").set('`chs("../renderproductsparentprimpath")`/renderproduct')
+    product.parm("productName").set(string_ref("picture"))
+    product.parm("orderedVars").set('`chs("../rendervarsparentprimpath")`/beauty')
+
+    var = subnet.createNode("rendervar", "beauty")
+    var.setInput(0, product)
+    var.parm("primpath").set('`chs("../rendervarsparentprimpath")`/beauty')
     var.parm("sourceName").set("color")
     var.parm("dataType").set("color4f")
     var.parm("sourceType").set("raw")
@@ -80,14 +87,8 @@ def build_contents(subnet, sockets, ds_dir):
     var.parm(hou.text.encodeParm("driver:parameters:aov:husk:format")).set("color4f")
     var.parm(hou.text.encodeParm("driver:parameters:aov:husk:name")).set("color")
 
-    product = subnet.createNode("renderproduct", "product")
-    product.setInput(0, var)
-    product.parm("primpath").set('`chs("../renderproductsparentprimpath")`/beauty')
-    product.parm("productName").set(string_ref("picture"))
-    product.parm("orderedVars").set('`chs("../rendervarsparentprimpath")`/color')
-
     settings = subnet.createNode("rendersettings", "settings")
-    settings.setInput(0, product)
+    settings.setInput(0, var)
     settings.parm("primpath").set(string_ref("primpath"))
     settings.parm("camera").set(string_ref("camera"))
     settings.parm("res_mode").set("manual")
@@ -97,7 +98,7 @@ def build_contents(subnet, sockets, ds_dir):
         parm.lock(False)
         parm.setExpression('ch("../%s")' % parm.name())
     settings.parm("pixelAspectRatio").setExpression('ch("../pixelAspectRatio")')
-    settings.parm("products").set('`chs("../renderproductsparentprimpath")`/beauty')
+    settings.parm("products").set('`chs("../renderproductsparentprimpath")`/renderproduct')
 
     ensure_cycles_parms(settings, ds_dir)
     for setting in rendersettings2ds.settings():
@@ -209,6 +210,11 @@ def main():
     samples = settings_prim.GetAttribute("cycles:samples").Get()
     if samples != 64:
         raise RuntimeError("cycles:samples is %r instead of 64" % samples)
+    for path, type_name in (("Products/renderproduct", "RenderProduct"),
+                            ("Vars/beauty", "RenderVar")):
+        prim = stage_prims.GetPrimAtPath("/Render/%s/%s" % (test.name(), path))
+        if not prim or prim.GetTypeName() != type_name:
+            raise RuntimeError("%s prim %s not created" % (type_name, path))
     log("Wrote %s (%d settings)" % (hda_path, len(list(rendersettings2ds.settings()))))
     return 0
 
