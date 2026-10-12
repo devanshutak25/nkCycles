@@ -31,8 +31,19 @@ HdCyclesDisplayDriver::~HdCyclesDisplayDriver()
     _hgi->DestroyTexture(&texture_);
   }
 
-  if (gl_pbo_id_) {
-    glDeleteBuffers(1, &gl_pbo_id_);
+  // Cycles destroys the display driver in the session thread, which has no OpenGL context
+  // current. Calling OpenGL functions without one crashes, so use the shared context.
+  if (gl_context_enable()) {
+    if (gl_upload_sync_) {
+      glDeleteSync((GLsync)gl_upload_sync_);
+    }
+    if (gl_render_sync_) {
+      glDeleteSync((GLsync)gl_render_sync_);
+    }
+    if (gl_pbo_id_) {
+      glDeleteBuffers(1, &gl_pbo_id_);
+    }
+    gl_context_disable();
   }
 
   gl_context_dispose();
@@ -150,6 +161,9 @@ bool HdCyclesDisplayDriver::update_begin(const Params &params,
 
 void HdCyclesDisplayDriver::update_end()
 {
+  if (gl_upload_sync_) {
+    glDeleteSync((GLsync)gl_upload_sync_);
+  }
   gl_upload_sync_ = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
   glFlush();
 
@@ -158,7 +172,9 @@ void HdCyclesDisplayDriver::update_end()
 
 void HdCyclesDisplayDriver::flush()
 {
-  gl_context_enable();
+  if (!gl_context_enable()) {
+    return;
+  }
 
   if (gl_upload_sync_) {
     glWaitSync((GLsync)gl_upload_sync_, 0, GL_TIMEOUT_IGNORED);
@@ -283,6 +299,9 @@ void HdCyclesDisplayDriver::draw(const Params &params)
   glBindTexture(GL_TEXTURE_2D, 0);
   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
 
+  if (gl_render_sync_) {
+    glDeleteSync((GLsync)gl_render_sync_);
+  }
   gl_render_sync_ = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
   glFlush();
 
