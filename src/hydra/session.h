@@ -12,6 +12,8 @@
 #include <pxr/imaging/hd/renderDelegate.h>
 
 #include <optional>
+#include <string>
+#include <unordered_map>
 
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
@@ -90,6 +92,9 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
 
   void SyncAovBindings(const PXR_NS::HdRenderPassAovBindingVector &aovBindings);
 
+  // Name of the Cycles pass holding an AOV, which can be shared with other AOVs
+  const std::string &GetPassName(const PXR_NS::TfToken &aovName) const;
+
   void RemoveAovBinding(PXR_NS::HdRenderBuffer *renderBuffer);
 
   CCL_NS::Session *session;
@@ -103,6 +108,7 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
   bool _depthToWindow = false;
   std::optional<bool> _transparentBackground;
   PXR_NS::HdRenderPassAovBindingVector _aovBindings;
+  std::unordered_map<PXR_NS::TfToken, std::string, PXR_NS::TfToken::HashFunctor> _passNames;
   PXR_NS::HdRenderPassAovBinding _displayAovBinding;
 };
 

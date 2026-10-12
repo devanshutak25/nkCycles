@@ -75,7 +75,8 @@ bool HdCyclesOutputDriver::update_render_tile(const Tile &tile)
           (format >= HdFormatFloat32 && format <= HdFormatFloat32Vec4))
       {
         float *const data = static_cast<float *>(renderBuffer->Map());
-        TF_VERIFY(tile.get_pass_pixels(aovBinding.aovName.GetString(), channels, data));
+        TF_VERIFY(
+            tile.get_pass_pixels(_renderParam->GetPassName(aovBinding.aovName), channels, data));
         if (aovBinding.aovName == HdAovTokens->depth && channels == 1 &&
             _renderParam->GetDepthToWindow()) {
           convert_depth(data,
@@ -87,7 +88,9 @@ bool HdCyclesOutputDriver::update_render_tile(const Tile &tile)
       }
       else {
         pixels.resize(channels * tile.size.x * tile.size.y);
-        if (tile.get_pass_pixels(aovBinding.aovName.GetString(), channels, pixels.data())) {
+        if (tile.get_pass_pixels(
+                _renderParam->GetPassName(aovBinding.aovName), channels, pixels.data()))
+        {
           if (aovBinding.aovName == HdAovTokens->depth && channels == 1 &&
             _renderParam->GetDepthToWindow()) {
             convert_depth(pixels.data(),

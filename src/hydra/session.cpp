@@ -16,6 +16,8 @@
 
 #include <pxr/imaging/hd/renderBuffer.h>
 
+#include <algorithm>
+
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
 namespace {
@@ -28,10 +30,66 @@ const std::unordered_map<TfToken, PassType, TfToken::HashFunctor> kAovToPass = {
     {HdAovTokens->instanceId, PASS_AOV_VALUE},
 };
 
-// Hydra AOVs, then Cycles pass names ("diffuse_direct", "mist", ...), then shader AOVs written by
-// the AOV Output node, matched by name.
+// Light path expressions of Karma's AOVs, matched to the Cycles light passes holding the same
+// light paths. These passes include the albedo, like an LPE.
+const std::unordered_map<string, PassType> kLpeToPass = {
+    {"C.*[LO]", PASS_COMBINED},
+    {"C<RD>.*L", PASS_DIFFUSE},
+    {"C<RD>L", PASS_DIFFUSE_DIRECT},
+    {"C<RD>.+L", PASS_DIFFUSE_INDIRECT},
+    {"C<RG>.*L", PASS_GLOSSY},
+    {"C<RG>L", PASS_GLOSSY_DIRECT},
+    {"C<RG>.+L", PASS_GLOSSY_INDIRECT},
+    {"C<TG>.*L", PASS_TRANSMISSION},
+    {"C<TG>L", PASS_TRANSMISSION_DIRECT},
+    {"C<TG>.+L", PASS_TRANSMISSION_INDIRECT},
+    {"CV.*L", PASS_VOLUME},
+    {"CVL", PASS_VOLUME_DIRECT},
+    {"CV.+L", PASS_VOLUME_INDIRECT},
+    {"CO", PASS_EMISSION},
+    {"CDA", PASS_DIFFUSE_COLOR},
+    {"C[DV]A", PASS_DIFFUSE_COLOR},
+};
+
+PassType LpeToPassType(string lpe)
+{
+  lpe.erase(std::remove(lpe.begin(), lpe.end(), ' '), lpe.end());
+  const auto it = kLpeToPass.find(lpe);
+  return it != kLpeToPass.end() ? it->second : PASS_NONE;
+}
+
+string GetAovSetting(const HdRenderPassAovBinding &aovBinding, const TfToken &key)
+{
+  const auto it = aovBinding.aovSettings.find(key);
+  if (it == aovBinding.aovSettings.end()) {
+    return string();
+  }
+  if (it->second.IsHolding<TfToken>()) {
+    return it->second.UncheckedGet<TfToken>().GetString();
+  }
+  return it->second.IsHolding<string>() ? it->second.UncheckedGet<string>() : string();
+}
+
+// Light path expression of a render var: husk passes it in the AOV settings, others as an
+// "lpe:" AOV name.
+string GetLpe(const HdRenderPassAovBinding &aovBinding)
+{
+  if (GetAovSetting(aovBinding, TfToken("sourceType")) == "lpe") {
+    return GetAovSetting(aovBinding, TfToken("sourceName"));
+  }
+  const string &name = aovBinding.aovName.GetString();
+  return TfStringStartsWith(name, "lpe:") ? name.substr(4) : string();
+}
+
+// Light path expressions, Hydra AOVs, then Cycles pass names ("diffuse_direct", "mist", ...),
+// then shader AOVs written by the AOV Output node, matched by name.
 PassType AovToPassType(const HdRenderPassAovBinding &aovBinding)
 {
+  const string lpe = GetLpe(aovBinding);
+  if (!lpe.empty()) {
+    return LpeToPassType(lpe);
+  }
+
   const PassType type = HdCyclesSession::GetPassType(aovBinding.aovName);
   if (type != PASS_NONE) {
     return type;
@@ -39,8 +97,8 @@ PassType AovToPassType(const HdRenderPassAovBinding &aovBinding)
 
   const string &name = aovBinding.aovName.GetString();
 
-  // Light path expressions and primvars are not supported
-  if (TfStringStartsWith(name, "lpe:") || TfStringStartsWith(name, "primvars:")) {
+  // Primvars are not supported
+  if (TfStringStartsWith(name, "primvars:")) {
     return PASS_NONE;
   }
 
@@ -56,6 +114,9 @@ PassType HdCyclesSession::GetPassType(const TfToken &aovName)
   const auto hydraAov = kAovToPass.find(aovName);
   if (hydraAov != kAovToPass.end()) {
     return hydraAov->second;
+  }
+  if (TfStringStartsWith(aovName.GetString(), "lpe:")) {
+    return LpeToPassType(aovName.GetString().substr(4));
   }
   const NodeEnum *passTypes = Pass::get_type_enum();
   if (passTypes->exists(ustring(aovName.GetString()))) {
@@ -195,11 +256,31 @@ void HdCyclesSession::SyncAovBindings(const HdRenderPassAovBindingVector &aovBin
 
   // Update passes with requested AOV bindings
   _aovBindings = aovBindings;
+  _passNames.clear();
+  std::unordered_map<int, const Pass *> passOfType;
   for (const HdRenderPassAovBinding &aovBinding : aovBindings) {
     const PassType type = AovToPassType(aovBinding);
     if (type == PASS_NONE) {
       TF_WARN("Unknown pass %s", aovBinding.aovName.GetText());
       continue;
+    }
+
+    const bool includeAlbedo = !GetLpe(aovBinding).empty();
+
+    // The kernel writes one buffer per pass type, so AOVs of the same type (the beauty and a
+    // "C.*[LO]" LPE, for example) read the first pass of that type. Shader AOVs have a pass each.
+    if (type != PASS_AOV_COLOR && type != PASS_AOV_VALUE) {
+      const auto existing = passOfType.find(type);
+      if (existing != passOfType.end()) {
+        if (existing->second->get_include_albedo() != includeAlbedo) {
+          TF_WARN("AOV %s uses the same Cycles pass as %s, with%s albedo",
+                  aovBinding.aovName.GetText(),
+                  existing->second->get_name().c_str(),
+                  existing->second->get_include_albedo() ? "" : "out");
+        }
+        _passNames[aovBinding.aovName] = existing->second->get_name().string();
+        continue;
+      }
     }
 
     const PassMode mode = PassMode::DENOISED;
@@ -208,7 +289,15 @@ void HdCyclesSession::SyncAovBindings(const HdRenderPassAovBindingVector &aovBin
     pass->set_type(type);
     pass->set_mode(mode);
     pass->set_name(ustring(aovBinding.aovName.GetString()));
+    pass->set_include_albedo(includeAlbedo);
+    passOfType[type] = pass;
   }
+}
+
+const string &HdCyclesSession::GetPassName(const TfToken &aovName) const
+{
+  const auto it = _passNames.find(aovName);
+  return it != _passNames.end() ? it->second : aovName.GetString();
 }
 
 void HdCyclesSession::RemoveAovBinding(HdRenderBuffer *renderBuffer)
