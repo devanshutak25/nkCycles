@@ -88,6 +88,8 @@ install(CODE "
             \"${CMAKE_CURRENT_SOURCE_DIR}/src/shader2hda.py\"
             --json \"${CMAKE_CURRENT_BINARY_DIR}/shader_nodes.json\"
             --hda-install-dir \"\${CMAKE_INSTALL_PREFIX}/houdini/otls\"
+            --layouts \"${CMAKE_CURRENT_SOURCE_DIR}/blender_node_layouts.json\"
+            --defaults-out \"\${CMAKE_INSTALL_PREFIX}/shader_defaults.json\"
     RESULT_VARIABLE _hda_result
   )
   if(NOT _hda_result EQUAL 0)
