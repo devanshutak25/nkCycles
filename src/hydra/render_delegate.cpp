@@ -63,6 +63,15 @@ const TfTokenVector kSupportedBPrimTypes = {
 #endif
 };
 
+// Houdini sends menu values as tokens, while other clients may use strings
+std::string GetStringSetting(const VtValue &value, const std::string &defaultValue)
+{
+  if (value.IsHolding<TfToken>()) {
+    return value.UncheckedGet<TfToken>().GetString();
+  }
+  return VtValue::Cast<std::string>(value).GetWithDefault(defaultValue);
+}
+
 SessionParams GetSessionParams(const HdRenderSettingsMap &settings)
 {
   SessionParams params;
@@ -78,11 +87,11 @@ SessionParams GetSessionParams(const HdRenderSettingsMap &settings)
     params.threads = VtValue::Cast<int>(it->second).GetWithDefault(params.threads);
   }
 
-  // Get the Cycles device from settings or environment, falling back to CPU
-  std::string deviceType = Device::string_from_type(DEVICE_CPU);
+  // Get the Cycles device from settings or environment, defaulting to the best available GPU
+  std::string deviceType = "AUTO";
   it = settings.find(HdCyclesRenderSettingsTokens->device);
   if (it != settings.end()) {
-    deviceType = VtValue::Cast<std::string>(it->second).GetWithDefault(deviceType);
+    deviceType = GetStringSetting(it->second, deviceType);
   }
   else {
     const std::string deviceTypeEnv = TfGetenv("CYCLES_DEVICE");
@@ -95,11 +104,28 @@ SessionParams GetSessionParams(const HdRenderSettingsMap &settings)
   std::transform(deviceType.begin(), deviceType.end(), deviceType.begin(), ::toupper);
 
   vector<DeviceInfo> devices;
-  for (const DeviceInfo &info :
-       Device::available_devices(DEVICE_MASK(Device::type_from_string(deviceType.c_str()))))
-  {
-    if (info.meets_driver_requirement) {
-      devices.push_back(info);
+  if (deviceType == "AUTO") {
+    // Prefer OptiX over CUDA on NVIDIA, like the order of the Blender preferences
+    for (const DeviceType type :
+         {DEVICE_OPTIX, DEVICE_CUDA, DEVICE_HIP, DEVICE_METAL, DEVICE_ONEAPI})
+    {
+      for (const DeviceInfo &info : Device::available_devices(DEVICE_MASK(type))) {
+        if (info.meets_driver_requirement) {
+          devices.push_back(info);
+        }
+      }
+      if (!devices.empty()) {
+        break;
+      }
+    }
+  }
+  else {
+    for (const DeviceInfo &info :
+         Device::available_devices(DEVICE_MASK(Device::type_from_string(deviceType.c_str()))))
+    {
+      if (info.meets_driver_requirement) {
+        devices.push_back(info);
+      }
     }
   }
   if (devices.empty()) {
