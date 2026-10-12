@@ -11,7 +11,9 @@
 #include "scene/shader.h"
 #include "scene/shader_graph.h"
 #include "scene/shader_nodes.h"
+#include "util/path.h"
 
+#include <pxr/base/js/json.h>
 #include <pxr/imaging/hd/material.h>
 #include <pxr/imaging/hd/materialConnectionSchema.h>
 #include <pxr/imaging/hd/materialNetworkSchema.h>
@@ -34,6 +36,98 @@ static SdfPath MaterialNodeNameToSdfPath(const TfToken &nodeName)
     return SdfPath(s);
   }
   return SdfPath::AbsoluteRootPath().AppendChild(nodeName);
+}
+
+/* Default values for Cycles shader node sockets that differ from the Cycles socket defaults,
+ * read from "shader_defaults.json" in the resource directory. Host integrations write this
+ * when their shader node UI shows other defaults, e.g. the Houdini shader nodes show Blender's
+ * defaults. Hosts only write values that differ from the UI default to USD, so the render only
+ * matches the UI when these are applied first. */
+class ShaderNodeDefaults {
+  using Defaults = std::vector<std::pair<ustring, VtValue>>;
+
+ public:
+  ShaderNodeDefaults()
+  {
+    const string filepath = path_get("shader_defaults.json");
+    if (!path_exists(filepath)) {
+      return;
+    }
+    string text;
+    if (!path_read_text(filepath, text)) {
+      TF_WARN("Could not read shader node defaults from '%s'", filepath.c_str());
+      return;
+    }
+    JsParseError error;
+    const JsValue root = JsParseString(text, &error);
+    if (!root.IsObject()) {
+      TF_WARN("Could not parse shader node defaults from '%s', line %u: %s",
+              filepath.c_str(),
+              error.line,
+              error.reason.c_str());
+      return;
+    }
+    for (const auto &[nodeName, sockets] : root.GetJsObject()) {
+      if (!sockets.IsObject()) {
+        continue;
+      }
+      Defaults &defaults = _nodes[nodeName];
+      for (const auto &[socketName, value] : sockets.GetJsObject()) {
+        VtValue converted = ConvertValue(value);
+        if (!converted.IsEmpty()) {
+          defaults.emplace_back(ustring(socketName), std::move(converted));
+        }
+      }
+    }
+  }
+
+  void Apply(ShaderNode *node, const string &nodeType) const
+  {
+    const auto it = _nodes.find(nodeType);
+    if (it == _nodes.end()) {
+      return;
+    }
+    for (const auto &[socketName, value] : it->second) {
+      if (const SocketType *socket = node->type->find_input(socketName)) {
+        SetNodeValue(node, *socket, value);
+      }
+    }
+  }
+
+ private:
+  static VtValue ConvertValue(const JsValue &value)
+  {
+    if (value.IsBool()) {
+      return VtValue(value.GetBool());
+    }
+    if (value.IsInt()) {
+      return VtValue(value.GetInt());
+    }
+    if (value.IsReal()) {
+      return VtValue(float(value.GetReal()));
+    }
+    if (value.IsString()) {
+      return VtValue(value.GetString());
+    }
+    if (value.IsArrayOf<double>()) {
+      const std::vector<double> array = value.GetArrayOf<double>();
+      if (array.size() == 2) {
+        return VtValue(GfVec2f(array[0], array[1]));
+      }
+      if (array.size() == 3) {
+        return VtValue(GfVec3f(array[0], array[1], array[2]));
+      }
+    }
+    return VtValue();
+  }
+
+  std::unordered_map<string, Defaults> _nodes;
+};
+
+static const ShaderNodeDefaults &GetShaderNodeDefaults()
+{
+  static const ShaderNodeDefaults defaults;
+  return defaults;
 }
 
 // clang-format off
@@ -537,7 +631,9 @@ unique_ptr<ShaderGraph> HdCyclesMaterial::BuildShaderGraph(HdMaterialNetworkSche
       const std::string &nodeTypeId = nodeTypeIdToken.GetString();
 
       ustring cyclesType(nodeTypeId);
-      if (nodeTypeId.starts_with("cycles_") || nodeTypeId.starts_with("cycles:")) {
+      const bool isNativeNode = nodeTypeId.starts_with("cycles_") ||
+                                nodeTypeId.starts_with("cycles:");
+      if (isNativeNode) {
         /* Native Cycles note embedded in USDShade. */
         cyclesType = nodeTypeId.substr(strlen("cycles_"));
         nodeDesc.mapping = sUsdToCyles->findCycles(cyclesType);
@@ -553,6 +649,9 @@ unique_ptr<ShaderGraph> HdCyclesMaterial::BuildShaderGraph(HdMaterialNetworkSche
       /* If it's a native Cycles' node-type, just do the lookup now. */
       if (const NodeType *nodeType = NodeType::find(cyclesType)) {
         nodeDesc.node = graph->create_node(nodeType);
+        if (isNativeNode) {
+          GetShaderNodeDefaults().Apply(nodeDesc.node, cyclesType.string());
+        }
         _nodes.emplace(nodePath, nodeDesc);
       }
       else {
