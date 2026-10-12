@@ -12,6 +12,7 @@
 #include "scene/shader_graph.h"
 #include "scene/shader_nodes.h"
 #include "util/path.h"
+#include "util/string.h"
 
 #include <pxr/base/js/json.h>
 #include <pxr/imaging/hd/material.h>
@@ -736,6 +737,12 @@ unique_ptr<ShaderGraph> HdCyclesMaterial::BuildShaderGraph(HdMaterialNetworkSche
      * name that is known to exist. */
     if (!upstreamOutputName.IsEmpty() && nodeIt->second.mapping == nullptr) {
       outputName = upstreamOutputName.GetText();
+    }
+
+    /* Houdini's material builder authors every Cycles shader as surface terminal, also volume
+     * shaders, which would leave volumes without a shader. */
+    if (string(inputName) == "Surface" && string_iequals(outputName, "volume")) {
+      inputName = "Volume";
     }
 
     ShaderInput *const input = inputName ? graph->output()->input(inputName) : nullptr;
