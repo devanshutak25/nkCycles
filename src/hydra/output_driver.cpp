@@ -43,7 +43,7 @@ HdCyclesOutputDriver::HdCyclesOutputDriver(HdCyclesSession *renderParam)
 
 void HdCyclesOutputDriver::write_render_tile(const Tile &tile)
 {
-  update_render_tile(tile);
+  update_render_buffers(tile, true);
 
   // Update convergence state of all render buffers
   for (const HdRenderPassAovBinding &aovBinding : _renderParam->GetAovBindings()) {
@@ -55,12 +55,22 @@ void HdCyclesOutputDriver::write_render_tile(const Tile &tile)
 
 bool HdCyclesOutputDriver::update_render_tile(const Tile &tile)
 {
+  update_render_buffers(tile, false);
+  return true;
+}
+
+void HdCyclesOutputDriver::update_render_buffers(const Tile &tile, const bool final)
+{
   std::vector<float> pixels;
 
   for (const HdRenderPassAovBinding &aovBinding : _renderParam->GetAovBindings()) {
     if (auto *const renderBuffer = static_cast<HdCyclesRenderBuffer *>(aovBinding.renderBuffer)) {
-      if (aovBinding == _renderParam->GetDisplayAovBinding() && renderBuffer->IsResourceUsed()) {
-        continue;  // Display AOV binding is already updated by Cycles display driver
+      // The Cycles display driver updates the display AOV texture while rendering. The final
+      // image also goes to the buffer, which Houdini reads for slap comps and snapshots.
+      if (!final && aovBinding == _renderParam->GetDisplayAovBinding() &&
+          renderBuffer->IsResourceUsed())
+      {
+        continue;
       }
 
       const HdFormat format = renderBuffer->GetFormat();
@@ -118,8 +128,6 @@ bool HdCyclesOutputDriver::update_render_tile(const Tile &tile)
       }
     }
   }
-
-  return true;
 }
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

@@ -69,11 +69,7 @@ void HdCyclesRenderBuffer::_Deallocate()
 
 void *HdCyclesRenderBuffer::Map()
 {
-  // Mapping is not implemented when a resource is set
-  if (!_resource.IsEmpty()) {
-    return nullptr;
-  }
-
+  // With a resource set (display driver texture) the data holds the final image only
   if (_data.size() != _dataSize) {
     _data.resize(_dataSize);
   }
