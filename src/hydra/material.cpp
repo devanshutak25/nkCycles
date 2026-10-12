@@ -211,6 +211,72 @@ class UsdToCycles {
 };
 TfStaticData<UsdToCycles> sUsdToCyles;
 
+/* Socket name for comparison, ignoring case, spaces, underscores and dots. Houdini parameter names
+ * can't contain dots, so e.g. "tex_mapping.scale" becomes "tex_mapping_scale". */
+static std::string NormalizeName(const std::string &name)
+{
+  std::string result;
+  for (char c : name) {
+    if (c != '_' && c != ' ' && c != '.') {
+      result += std::tolower(static_cast<unsigned char>(c));
+    }
+  }
+  if (result == "vectorin" || result == "vectorout") {
+    return "vector";
+  }
+  return result;
+}
+
+/* Find a socket by either its identifier (e.g. "emission", as used by the Houdini shader nodes)
+ * or its UI name (e.g. "Emission", as exported by Blender). Identifiers take precedence, as UI
+ * names are ambiguous: e.g. texture nodes have both a "scale" input and a "tex_mapping.scale"
+ * input with UI name "Scale". */
+static bool SocketNameMatches(const SocketType &socket,
+                              const std::string &normName,
+                              const bool use_ui_name)
+{
+  return NormalizeName(use_ui_name ? socket.ui_name.string() : socket.name.string()) == normName;
+}
+
+static const SocketType *FindSocketType(const NodeType *type, const std::string &name)
+{
+  const std::string normName = NormalizeName(name);
+  for (const bool use_ui_name : {false, true}) {
+    for (const SocketType &socket : type->inputs) {
+      if (SocketNameMatches(socket, normName, use_ui_name)) {
+        return &socket;
+      }
+    }
+  }
+  return nullptr;
+}
+
+static ShaderInput *FindInput(ShaderNode *node, const std::string &name)
+{
+  const std::string normName = NormalizeName(name);
+  for (const bool use_ui_name : {false, true}) {
+    for (ShaderInput *in : node->inputs) {
+      if (SocketNameMatches(in->socket_type, normName, use_ui_name)) {
+        return in;
+      }
+    }
+  }
+  return nullptr;
+}
+
+static ShaderOutput *FindOutput(ShaderNode *node, const std::string &name)
+{
+  const std::string normName = NormalizeName(name);
+  for (const bool use_ui_name : {false, true}) {
+    for (ShaderOutput *out : node->outputs) {
+      if (SocketNameMatches(out->socket_type, normName, use_ui_name)) {
+        return out;
+      }
+    }
+  }
+  return nullptr;
+}
+
 }  // namespace
 
 static void AddInstanceIdAOV(ShaderGraph *graph)
@@ -317,13 +383,7 @@ void HdCyclesMaterial::UpdateParameters(NodeDesc &nodeDesc,
                                       paramName.GetString();
 
     /* Find the input to write the parameter value to. */
-    const SocketType *input = nullptr;
-    for (const SocketType &socket : nodeDesc.node->type->inputs) {
-      if (string_iequals(socket.name.string(), inputName) || socket.ui_name == inputName) {
-        input = &socket;
-        break;
-      }
-    }
+    const SocketType *input = FindSocketType(nodeDesc.node->type, inputName);
 
     if (!input) {
       if (inputMapping) {
@@ -389,13 +449,7 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
                                       dstSocketName.GetString();
 
     /* Find the input to connect to on the passed in node. */
-    ShaderInput *input = nullptr;
-    for (ShaderInput *in : nodeDesc.node->inputs) {
-      if (string_iequals(in->socket_type.name.string(), inputName)) {
-        input = in;
-        break;
-      }
-    }
+    ShaderInput *input = FindInput(nodeDesc.node, inputName);
 
     if (!input) {
       TF_WARN("Ignoring connection on '%s.%s', input '%s' was not found",
@@ -439,13 +493,7 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
                                        outputMapping->parameterName(upstreamOutputName, input) :
                                        upstreamOutputName.GetString();
 
-    ShaderOutput *output = nullptr;
-    for (ShaderOutput *out : srcNodeIt->second.node->outputs) {
-      if (string_iequals(out->socket_type.name.string(), outputName)) {
-        output = out;
-        break;
-      }
-    }
+    ShaderOutput *output = FindOutput(srcNodeIt->second.node, outputName);
 
     if (!output) {
       TF_WARN("Ignoring connection from '%s.%s' to '%s.%s', output '%s' was not found",
@@ -594,7 +642,7 @@ unique_ptr<ShaderGraph> HdCyclesMaterial::BuildShaderGraph(HdMaterialNetworkSche
       continue;
     }
 
-    ShaderOutput *const output = outputName ? node->output(outputName) : nullptr;
+    ShaderOutput *const output = outputName ? FindOutput(node, outputName) : nullptr;
     if (!output) {
       TF_RUNTIME_ERROR("Could not find terminal output '%s.%s'",
                        upstreamNodePath.GetText(),
