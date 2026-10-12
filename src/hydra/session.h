@@ -10,6 +10,8 @@
 
 #include <pxr/imaging/hd/renderDelegate.h>
 
+#include <optional>
+
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
 struct SceneLock {
@@ -29,6 +31,9 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
   ~HdCyclesSession() override;
 
   void UpdateScene();
+
+  // Override the automatic background transparency, which depends on presence of a dome light
+  void SetTransparentBackground(const std::optional<bool> transparent);
 
   double GetStageMetersPerUnit() const
   {
@@ -65,6 +70,7 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
  private:
   const bool _ownCyclesSession;
   double _stageMetersPerUnit = 0.01;
+  std::optional<bool> _transparentBackground;
   PXR_NS::HdRenderPassAovBindingVector _aovBindings;
   PXR_NS::HdRenderPassAovBinding _displayAovBinding;
 };

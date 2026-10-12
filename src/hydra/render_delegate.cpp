@@ -17,9 +17,13 @@
 #include "hydra/render_pass.h"
 #include "hydra/session.h"
 #include "hydra/volume.h"
+#include "scene/background.h"
+#include "scene/film.h"
 #include "scene/integrator.h"
 #include "scene/scene.h"
 #include "session/session.h"
+
+#include <array>
 
 #include <pxr/base/tf/getenv.h>
 #include <pxr/imaging/hgi/tokens.h>
@@ -70,6 +74,27 @@ std::string GetStringSetting(const VtValue &value, const std::string &defaultVal
     return value.UncheckedGet<TfToken>().GetString();
   }
   return VtValue::Cast<std::string>(value).GetWithDefault(defaultValue);
+}
+
+// Scene nodes whose sockets are exposed as "cycles:<node>:<socket>" render settings
+std::array<std::pair<std::string, Node *>, 3> GetSettingNodes(Scene *scene)
+{
+  return {{
+      {"cycles:integrator:", scene->integrator},
+      {"cycles:film:", scene->film},
+      {"cycles:background:", scene->background},
+  }};
+}
+
+Node *FindSettingNode(Scene *scene, const std::string &key, ustring &socketName)
+{
+  for (const auto &[prefix, node] : GetSettingNodes(scene)) {
+    if (key.compare(0, prefix.size(), prefix) == 0) {
+      socketName = ustring(key.c_str() + prefix.size());
+      return node;
+    }
+  }
+  return nullptr;
 }
 
 SessionParams GetSessionParams(const HdRenderSettingsMap &settings)
@@ -421,10 +446,15 @@ HdRenderSettingDescriptorList HdCyclesDelegate::GetRenderSettingDescriptors() co
       VtValue(0),
   });
 
-  for (const SocketType &socket : scene->integrator->type->inputs) {
-    descriptors.push_back({socket.ui_name.string(),
-                           TfToken("cycles:integrator:" + socket.name.string()),
-                           GetNodeValue(scene->integrator, socket)});
+  for (const auto &[prefix, node] : GetSettingNodes(scene)) {
+    for (const SocketType &socket : node->type->inputs) {
+      if (socket.type == SocketType::NODE) {
+        continue;
+      }
+      descriptors.push_back({socket.ui_name.string(),
+                             TfToken(prefix + socket.name.string()),
+                             GetNodeValue(node, socket)});
+    }
   }
 
   return descriptors;
@@ -456,12 +486,17 @@ void HdCyclesDelegate::SetRenderSetting(const PXR_NS::TfToken &key, const PXR_NS
     session->params.use_sample_subset = session->params.sample_subset_offset > 0;
     ++_settingsVersion;
   }
+  else if (key == HdCyclesRenderSettingsTokens->transparentBackground) {
+    _renderParam->SetTransparentBackground(
+        value.IsEmpty() ? std::nullopt :
+                          std::optional<bool>(VtValue::Cast<bool>(value).GetWithDefault(false)));
+    ++_settingsVersion;
+  }
   else {
-    const std::string &keyString = key.GetString();
-    if (keyString.rfind("cycles:integrator:", 0) == 0) {
-      const ustring socketName(keyString, sizeof("cycles:integrator:") - 1);
-      if (const SocketType *socket = scene->integrator->type->find_input(socketName)) {
-        SetNodeValue(scene->integrator, *socket, value);
+    ustring socketName;
+    if (Node *const node = FindSettingNode(scene, key.GetString(), socketName)) {
+      if (const SocketType *socket = node->type->find_input(socketName)) {
+        SetNodeValue(node, *socket, value);
         ++_settingsVersion;
       }
     }
@@ -492,11 +527,10 @@ VtValue HdCyclesDelegate::GetRenderSetting(const TfToken &key) const
     return VtValue((session->params.use_sample_subset) ? session->params.sample_subset_offset : 0);
   }
 
-  const std::string &keyString = key.GetString();
-  if (keyString.rfind("cycles:integrator:", 0) == 0) {
-    const ustring socketName(keyString, sizeof("cycles:integrator:") - 1);
-    if (const SocketType *socket = scene->integrator->type->find_input(socketName)) {
-      return GetNodeValue(scene->integrator, *socket);
+  ustring socketName;
+  if (Node *const node = FindSettingNode(scene, key.GetString(), socketName)) {
+    if (const SocketType *socket = node->type->find_input(socketName)) {
+      return GetNodeValue(node, *socket);
     }
   }
 
