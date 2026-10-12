@@ -176,9 +176,11 @@ void HdCyclesCamera::Finalize(HdRenderParam *renderParam)
   HdCamera::Finalize(renderParam);
 }
 
-void HdCyclesCamera::ApplyCameraSettings(HdRenderParam *renderParam, Camera *cam) const
+void HdCyclesCamera::ApplyCameraSettings(HdRenderParam *renderParam,
+                                         Camera *cam,
+                                         float aspectRatio) const
 {
-  ApplyCameraSettings(renderParam, _data, _windowPolicy, cam);
+  ApplyCameraSettings(renderParam, _data, _windowPolicy, cam, aspectRatio);
 
   const float metersPerUnit = static_cast<HdCyclesSession *>(renderParam)->GetStageMetersPerUnit();
 
@@ -192,13 +194,15 @@ void HdCyclesCamera::ApplyCameraSettings(HdRenderParam *renderParam, Camera *cam
 void HdCyclesCamera::ApplyCameraSettings(HdRenderParam *renderParam,
                                          const GfCamera &dataUnconformedWindow,
                                          CameraUtilConformWindowPolicy windowPolicy,
-                                         Camera *cam)
+                                         Camera *cam,
+                                         float aspectRatio)
 {
   const float width = cam->get_full_width();
   const float height = cam->get_full_height();
 
   auto data = dataUnconformedWindow;
-  CameraUtilConformWindow(&data, windowPolicy, width / height);
+  CameraUtilConformWindow(
+      &data, windowPolicy, (aspectRatio != 0.0f) ? aspectRatio : width / height);
 
   if (data.GetProjection() == GfCamera::Orthographic) {
     cam->set_camera_type(CAMERA_ORTHOGRAPHIC);
@@ -241,12 +245,13 @@ void HdCyclesCamera::ApplyCameraSettings(HdRenderParam *renderParam,
                                          const GfMatrix4d &worldToViewMatrix,
                                          const GfMatrix4d &projectionMatrix,
                                          const std::vector<GfVec4d> & /*clipPlanes*/,
-                                         Camera *cam)
+                                         Camera *cam,
+                                         float aspectRatio)
 {
   GfCamera data;
   data.SetFromViewAndProjectionMatrix(worldToViewMatrix, projectionMatrix);
 
-  ApplyCameraSettings(renderParam, data, CameraUtilFit, cam);
+  ApplyCameraSettings(renderParam, data, CameraUtilFit, cam, aspectRatio);
 }
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

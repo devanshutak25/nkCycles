@@ -111,9 +111,31 @@ void HdCyclesRenderPass::_Execute(const HdRenderPassStateSharedPtr &renderPassSt
 
     // Update camera dimensions to the viewport size
     CameraUtilFraming framing = renderPassState->GetFraming();
+    float aspectRatio = 0.0f;
     if (!framing.IsValid()) {
       const GfVec4f vp = renderPassState->GetViewport();
-      framing = CameraUtilFraming(GfRect2i(GfVec2i(0), int(vp[2]), int(vp[3])));
+      GfVec2i size(static_cast<int>(vp[2]), static_cast<int>(vp[3]));
+
+      // The render buffers can have a different size than the viewport. Houdini binds buffers
+      // the size of the whole viewer while looking through a camera, sets the viewport to the
+      // size of the camera gate, and stretches the buffers over the gate. Render at the buffer
+      // size, since the display only draws into a buffer of the same size as the render, with
+      // the camera window conformed to the aspect ratio of the viewport.
+      for (const HdRenderPassAovBinding &aovBinding : aovBindings) {
+        if (aovBinding.renderBuffer && aovBinding.renderBuffer->GetWidth() != 0 &&
+            aovBinding.renderBuffer->GetHeight() != 0)
+        {
+          const GfVec2i bufferSize(int(aovBinding.renderBuffer->GetWidth()),
+                                   int(aovBinding.renderBuffer->GetHeight()));
+          if (bufferSize != size && vp[2] > 0.0f && vp[3] > 0.0f) {
+            aspectRatio = vp[2] / vp[3];
+            size = bufferSize;
+          }
+          break;
+        }
+      }
+
+      framing = CameraUtilFraming(GfRect2i(GfVec2i(0), size[0], size[1]));
     }
 
     scene->camera->set_full_width(framing.dataWindow.GetWidth());
@@ -122,14 +144,15 @@ void HdCyclesRenderPass::_Execute(const HdRenderPassStateSharedPtr &renderPassSt
     if (const auto *const camera = static_cast<const HdCyclesCamera *>(
             renderPassState->GetCamera()))
     {
-      camera->ApplyCameraSettings(_renderParam, scene->camera);
+      camera->ApplyCameraSettings(_renderParam, scene->camera, aspectRatio);
     }
     else {
       HdCyclesCamera::ApplyCameraSettings(_renderParam,
                                           renderPassState->GetWorldToViewMatrix(),
                                           renderPassState->GetProjectionMatrix(),
                                           renderPassState->GetClipPlanes(),
-                                          scene->camera);
+                                          scene->camera,
+                                          aspectRatio);
     }
 
     // Reset session if the session, scene, camera or AOV bindings changed
