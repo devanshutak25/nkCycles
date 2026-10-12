@@ -107,4 +107,17 @@ install(CODE "
   if(NOT _ds_result EQUAL 0)
     message(WARNING \"rendersettings2ds.py failed with exit code \${_ds_result}\")
   endif()
+
+  message(STATUS \"Generating Cycles Render Settings LOP\")
+  execute_process(
+    COMMAND \"${HYTHON_EXECUTABLE}\"
+            \"${CMAKE_CURRENT_SOURCE_DIR}/src/cyclesrendersettings2hda.py\"
+            --json \"${CMAKE_CURRENT_BINARY_DIR}/render_settings.json\"
+            --ds-dir \"\${CMAKE_INSTALL_PREFIX}/houdini/soho/parameters\"
+            --hda-install-dir \"\${CMAKE_INSTALL_PREFIX}/houdini/otls\"
+    RESULT_VARIABLE _lop_result
+  )
+  if(NOT _lop_result EQUAL 0)
+    message(WARNING \"cyclesrendersettings2hda.py failed with exit code \${_lop_result}\")
+  endif()
 ")
