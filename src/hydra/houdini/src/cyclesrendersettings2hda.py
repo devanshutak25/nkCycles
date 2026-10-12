@@ -65,6 +65,199 @@ def ensure_cycles_parms(node, ds_dir):
         raise RuntimeError("Render Settings LOP has no Cycles parameters")
 
 
+# Render passes, laid out like Blender's view layer passes: (folder, [(row, [(parm, label,
+# [render var (name, source, source type, data type)])])]). Data and light passes have Blender's
+# names. Light path expressions have the names of Karma's AOVs and include the albedo, like
+# Karma's; Blender's light passes are divided by the color pass.
+AOV_FOLDERS = [
+    ("Data", [
+        ("Include", [
+            ("aov_depth", "Z", [("Depth", "depth", "raw", "float")]),
+            ("aov_mist", "Mist", [("Mist", "mist", "raw", "float")]),
+            ("aov_position", "Position", [("Position", "position", "raw", "color3f")]),
+            ("aov_normal", "Normal", [("Normal", "normal", "raw", "color3f")]),
+            ("aov_vector", "Vector", [("Vector", "motion", "raw", "color4f")]),
+            ("aov_uv", "UV", [("UV", "uv", "raw", "color3f")]),
+            ("aov_denoising", "Denoising Data", [
+                ("Denoising Normal", "denoising_normal", "raw", "color3f"),
+                ("Denoising Albedo", "denoising_albedo", "raw", "color3f"),
+                ("Denoising Depth", "denoising_depth", "raw", "float")]),
+        ]),
+        ("Indexes", [
+            ("aov_object_index", "Object Index", [("IndexOB", "object_id", "raw", "float")]),
+        ]),
+        ("Debug", [
+            ("aov_sample_count", "Sample Count",
+             [("Debug Sample Count", "sample_count", "raw", "float")]),
+        ]),
+    ]),
+    ("Light", [
+        ("Diffuse", [
+            ("aov_diffuse_direct", "Direct", [("DiffDir", "diffuse_direct", "raw", "color3f")]),
+            ("aov_diffuse_indirect", "Indirect",
+             [("DiffInd", "diffuse_indirect", "raw", "color3f")]),
+            ("aov_diffuse_color", "Color", [("DiffCol", "diffuse_color", "raw", "color3f")]),
+        ]),
+        ("Glossy", [
+            ("aov_glossy_direct", "Direct", [("GlossDir", "glossy_direct", "raw", "color3f")]),
+            ("aov_glossy_indirect", "Indirect",
+             [("GlossInd", "glossy_indirect", "raw", "color3f")]),
+            ("aov_glossy_color", "Color", [("GlossCol", "glossy_color", "raw", "color3f")]),
+        ]),
+        ("Transmission", [
+            ("aov_transmission_direct", "Direct",
+             [("TransDir", "transmission_direct", "raw", "color3f")]),
+            ("aov_transmission_indirect", "Indirect",
+             [("TransInd", "transmission_indirect", "raw", "color3f")]),
+            ("aov_transmission_color", "Color",
+             [("TransCol", "transmission_color", "raw", "color3f")]),
+        ]),
+        ("Volume", [
+            ("aov_volume_direct", "Direct", [("VolumeDir", "volume_direct", "raw", "color3f")]),
+            ("aov_volume_indirect", "Indirect",
+             [("VolumeInd", "volume_indirect", "raw", "color3f")]),
+        ]),
+        ("Other", [
+            ("aov_emission", "Emission", [("Emit", "emission", "raw", "color3f")]),
+            ("aov_environment", "Environment", [("Env", "background", "raw", "color3f")]),
+            ("aov_ao", "Ambient Occlusion", [("AO", "ao", "raw", "color3f")]),
+            ("aov_shadow_catcher", "Shadow Catcher",
+             [("Shadow Catcher", "shadow_catcher", "raw", "color3f")]),
+        ]),
+    ]),
+    ("Light Path Expressions", [
+        ("Diffuse", [
+            ("aov_lpe_combineddiffuse", "Combined",
+             [("combineddiffuse", "C<RD>.*L", "lpe", "color3f")]),
+            ("aov_lpe_directdiffuse", "Direct", [("directdiffuse", "C<RD>L", "lpe", "color3f")]),
+            ("aov_lpe_indirectdiffuse", "Indirect",
+             [("indirectdiffuse", "C<RD>.+L", "lpe", "color3f")]),
+        ]),
+        ("Glossy Reflection", [
+            ("aov_lpe_combinedglossyreflection", "Combined",
+             [("combinedglossyreflection", "C<RG>.*L", "lpe", "color3f")]),
+            ("aov_lpe_directglossyreflection", "Direct",
+             [("directglossyreflection", "C<RG>L", "lpe", "color3f")]),
+            ("aov_lpe_indirectglossyreflection", "Indirect",
+             [("indirectglossyreflection", "C<RG>.+L", "lpe", "color3f")]),
+        ]),
+        ("Glossy Transmission", [
+            ("aov_lpe_glossytransmission", "Combined",
+             [("glossytransmission", "C<TG>.*L", "lpe", "color3f")]),
+        ]),
+        ("Volume", [
+            ("aov_lpe_combinedvolume", "Combined", [("combinedvolume", "CV.*L", "lpe", "color3f")]),
+            ("aov_lpe_directvolume", "Direct", [("directvolume", "CVL", "lpe", "color3f")]),
+            ("aov_lpe_indirectvolume", "Indirect",
+             [("indirectvolume", "CV.+L", "lpe", "color3f")]),
+        ]),
+        ("Other", [
+            ("aov_lpe_directemission", "Direct Emission",
+             [("directemission", "CO", "lpe", "color3f")]),
+            ("aov_lpe_albedo", "Albedo", [("albedo", "CDA", "lpe", "color3f")]),
+        ]),
+    ]),
+]
+
+# Light path expressions using the same Cycles pass as a Blender light pass: only one of them can
+# be rendered, with or without the albedo.
+AOV_SHARED_PASS = {
+    "aov_lpe_directdiffuse": "aov_diffuse_direct",
+    "aov_lpe_indirectdiffuse": "aov_diffuse_indirect",
+    "aov_lpe_directglossyreflection": "aov_glossy_direct",
+    "aov_lpe_indirectglossyreflection": "aov_glossy_indirect",
+}
+
+# Python Script LOP inside the node: authors a render var for every enabled pass and shader AOV
+# and adds it to the render product.
+AOV_SCRIPT = """import hou
+from pxr import Sdf, Tf, UsdRender
+
+PASSES = %r
+
+top = hou.pwd().parent()
+stage = hou.pwd().editableStage()
+vars_path = top.evalParm("rendervarsparentprimpath")
+product = UsdRender.Product(stage.GetPrimAtPath(
+    top.evalParm("renderproductsparentprimpath") + "/renderproduct"))
+ordered_vars = product.GetOrderedVarsRel()
+
+
+def add_var(name, source, source_type, data_type):
+    var = UsdRender.Var.Define(stage, vars_path + "/" + Tf.MakeValidIdentifier(name))
+    var.CreateSourceNameAttr(source)
+    var.CreateSourceTypeAttr(source_type)
+    var.CreateDataTypeAttr(data_type)
+    prim = var.GetPrim()
+    prim.CreateAttribute("driver:parameters:aov:husk:name", Sdf.ValueTypeNames.String).Set(name)
+    prim.CreateAttribute("driver:parameters:aov:husk:format", Sdf.ValueTypeNames.String).Set(
+        data_type)
+    ordered_vars.AddTarget(var.GetPath())
+
+
+for parm, render_vars in PASSES:
+    if top.evalParm(parm):
+        for render_var in render_vars:
+            add_var(*render_var)
+
+for i in range(1, top.evalParm("shader_aovs") + 1):
+    name = top.evalParm("shader_aov_name%%d" %% i)
+    if name:
+        color = top.parm("shader_aov_type%%d" %% i).evalAsString() == "color"
+        add_var(name, name, "raw", "color3f" if color else "float")
+"""
+
+
+def aov_passes():
+    """(parm, render vars) of every pass toggle."""
+    return [(parm, render_vars) for _, rows in AOV_FOLDERS for _, toggles in rows
+            for parm, _, render_vars in toggles]
+
+
+def aov_parameters(passes_folder):
+    """Add the pass toggles and shader AOVs to the Passes folder."""
+    for folder_label, rows in AOV_FOLDERS:
+        folder = hou.FolderParmTemplate(
+            "folder_aov_" + folder_label.lower().replace(" ", "_"), folder_label,
+            folder_type=hou.folderType.Collapsible)
+        if folder_label == "Light Path Expressions":
+            folder.addParmTemplate(hou.LabelParmTemplate(
+                "aov_lpe_note", "", column_labels=(
+                    "Karma's AOVs, with the albedo. Cycles has no LPE engine: these are the "
+                    "matching Cycles passes.",)))
+        for row_label, toggles in rows:
+            label = hou.LabelParmTemplate("aov_label_" + toggles[0][0], row_label,
+                                          column_labels=("",))
+            label.setJoinWithNext(True)
+            folder.addParmTemplate(label)
+            for i, (parm, toggle_label, render_vars) in enumerate(toggles):
+                names = ", ".join(v[0] for v in render_vars)
+                toggle = hou.ToggleParmTemplate(
+                    parm, toggle_label, default_value=False,
+                    help="Render the %s render var%s (%s)." % (
+                        names, "s" if len(render_vars) > 1 else "",
+                        ", ".join(v[1] for v in render_vars)))
+                if parm in AOV_SHARED_PASS:
+                    toggle.setConditional(hou.parmCondType.DisableWhen,
+                                          "{ %s == 1 }" % AOV_SHARED_PASS[parm])
+                toggle.setJoinWithNext(i < len(toggles) - 1)
+                folder.addParmTemplate(toggle)
+        passes_folder.addParmTemplate(folder)
+
+    shader = hou.FolderParmTemplate("folder_aov_shader", "Shader AOV",
+                                    folder_type=hou.folderType.Collapsible)
+    aovs = hou.FolderParmTemplate("shader_aovs", "AOVs",
+                                  folder_type=hou.folderType.MultiparmBlock)
+    aovs.setHelp("Render vars for AOV Output shader nodes, matched by name.")
+    name = hou.StringParmTemplate("shader_aov_name#", "Name", 1, default_value=("AOV",))
+    name.setJoinWithNext(True)
+    aovs.addParmTemplate(name)
+    aovs.addParmTemplate(hou.MenuParmTemplate(
+        "shader_aov_type#", "Type", ("color", "value"), ("Color", "Value")))
+    shader.addParmTemplate(aovs)
+    passes_folder.addParmTemplate(shader)
+
+
 def string_ref(parm_name):
     return '`chs("../%s")`' % parm_name
 
@@ -87,8 +280,12 @@ def build_contents(subnet, sockets, ds_dir):
     var.parm(hou.text.encodeParm("driver:parameters:aov:husk:format")).set("color4f")
     var.parm(hou.text.encodeParm("driver:parameters:aov:husk:name")).set("color")
 
+    aovs = subnet.createNode("pythonscript", "aovs")
+    aovs.setInput(0, var)
+    aovs.parm("python").set(AOV_SCRIPT % (aov_passes(),))
+
     settings = subnet.createNode("rendersettings", "settings")
-    settings.setInput(0, var)
+    settings.setInput(0, aovs)
     settings.parm("primpath").set(string_ref("primpath"))
     settings.parm("camera").set(string_ref("camera"))
     settings.parm("res_mode").set("manual")
@@ -159,6 +356,9 @@ def top_parameters(sockets, reference):
     cycles = hou.ParmTemplateGroup()
     cycles.setToDialogScript(ds)
     for entry in cycles.entries():
+        if entry.name() == "cycles_passes_1":
+            entry = entry.clone()
+            aov_parameters(entry)
         group.append(entry)
     return group
 
@@ -215,6 +415,15 @@ def main():
         prim = stage_prims.GetPrimAtPath("/Render/%s/%s" % (test.name(), path))
         if not prim or prim.GetTypeName() != type_name:
             raise RuntimeError("%s prim %s not created" % (type_name, path))
+    test.parm("aov_diffuse_direct").set(True)
+    test.parm("aov_lpe_combineddiffuse").set(True)
+    test.parm("shader_aovs").set(1)
+    stage_prims = test.stage()
+    product = stage_prims.GetPrimAtPath("/Render/%s/Products/renderproduct" % test.name())
+    targets = [str(t).rsplit("/", 1)[1]
+               for t in product.GetRelationship("orderedVars").GetTargets()]
+    if targets != ["beauty", "DiffDir", "combineddiffuse", "AOV"]:
+        raise RuntimeError("Unexpected render vars %r" % targets)
     log("Wrote %s (%d settings)" % (hda_path, len(list(rendersettings2ds.settings()))))
     return 0
 
