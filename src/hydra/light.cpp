@@ -63,10 +63,9 @@ void HdCyclesLight::Sync(HdSceneDelegate *sceneDelegate,
   const HdContainerDataSourceHandle &primDs = prim.dataSource;
   const HdContainerDataSourceHandle lightDs = HdLightSchema::GetFromParent(primDs).GetContainer();
 
-  if (*dirtyBits & DirtyBits::DirtyTransform) {
-    const float metersPerUnit =
-        static_cast<HdCyclesSession *>(renderParam)->GetStageMetersPerUnit();
+  const float metersPerUnit = static_cast<HdCyclesSession *>(renderParam)->GetStageMetersPerUnit();
 
+  if (*dirtyBits & DirtyBits::DirtyTransform) {
     GfMatrix4d xform(1.0);
     if (auto matrixDs = HdXformSchema::GetFromParent(primDs).GetMatrix()) {
       xform = matrixDs->GetTypedValue(0.0f);
@@ -88,16 +87,18 @@ void HdCyclesLight::Sync(HdSceneDelegate *sceneDelegate,
     strength *= exp2(GetTypedValue<float>(lightDs, HdLightTokens->exposure, 0.0f));
     strength *= GetTypedValue<float>(lightDs, HdLightTokens->intensity, 1.0f);
 
-    if (_lightType == HdPrimTypeTokens->distantLight) {
-      /* Unclear why, but approximately matches Karma. */
-      strength *= 4.0f;
+    if (_lightType == HdPrimTypeTokens->distantLight ||
+        _lightType == HdPrimTypeTokens->domeLight)
+    {
+      /* Sun and background strength are radiance, same as the USD intensity. */
     }
     else {
       /* Convert from intensity to radiant flux. */
       strength *= M_PI_F;
     }
 
-    _light->set_normalize(GetTypedValue<bool>(lightDs, HdLightTokens->normalize, false));
+    const bool normalize = GetTypedValue<bool>(lightDs, HdLightTokens->normalize, false);
+    _light->set_normalize(normalize);
 
     if (auto ds = GetTypedDataSource<bool>(lightDs, _tokens->visibleInPrimaryRay)) {
       if (ds->GetTypedValue(0.0f)) {
@@ -141,7 +142,8 @@ void HdCyclesLight::Sync(HdSceneDelegate *sceneDelegate,
         spot_light->set_radius(0.0f);
       }
       else if (auto ds = GetTypedDataSource<float>(lightDs, HdLightTokens->radius)) {
-        spot_light->set_radius(ds->GetTypedValue(0.0f));
+        /* Radius in meters, like the light transform. */
+        spot_light->set_radius(ds->GetTypedValue(0.0f) * metersPerUnit);
       }
 
       bool shaping = false;
@@ -157,6 +159,17 @@ void HdCyclesLight::Sync(HdSceneDelegate *sceneDelegate,
       }
 
       _light->set_light_type(shaping ? LIGHT_SPOT : LIGHT_POINT);
+    }
+
+    /* Cycles normalizes by the area in meters, as the light transform includes the stage units.
+     * USD normalizes by the area in stage units, so compensate for the difference. Point lights
+     * without a radius and distant lights don't depend on the transform scale. */
+    if (normalize && metersPerUnit != 1.0f &&
+        (_lightType == HdPrimTypeTokens->rectLight || _lightType == HdPrimTypeTokens->diskLight ||
+         (_lightType == HdPrimTypeTokens->sphereLight &&
+          static_cast<SpotLight *>(_light)->get_radius() != 0.0f)))
+    {
+      strength *= sqr(metersPerUnit);
     }
 
     bool visible = true;
