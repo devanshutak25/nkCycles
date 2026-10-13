@@ -213,7 +213,16 @@ void set_attribute(const UsdStageRefPtr &stage, const AttributeValue &value)
     return;
   }
   const UsdPrim prim = stage->GetPrimAtPath(SdfPath(value.prim));
-  const UsdAttribute attr = prim ? prim.GetAttribute(TfToken(value.attribute)) : UsdAttribute();
+  const TfToken name(value.attribute);
+  UsdAttribute attr = prim ? prim.GetAttribute(name) : UsdAttribute();
+  if (prim && !attr) {
+    /* Nuke 15 puts the Camera prim under the Xform prim of the camera node. */
+    for (const UsdPrim &child : prim.GetChildren()) {
+      if ((attr = child.GetAttribute(name))) {
+        break;
+      }
+    }
+  }
   if (!attr || attr.HasAuthoredValue()) {
     return;
   }
