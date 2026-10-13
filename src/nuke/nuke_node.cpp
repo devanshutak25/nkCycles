@@ -214,7 +214,7 @@ void fix_array_types(std::string &text)
   for (size_t line = 0; line < view.size();) {
     const size_t end = std::min(view.find('\n', line), view.size());
     size_t type = view.find_first_not_of(" \t", line);
-    for (const std::string_view qualifier : {"uniform ", "custom "}) {
+    for (const std::string_view qualifier : {"custom ", "uniform "}) {
       if (type < end && view.substr(type, qualifier.size()) == qualifier) {
         type = view.find_first_not_of(' ', type + qualifier.size());
       }
@@ -222,7 +222,11 @@ void fix_array_types(std::string &text)
     const size_t type_end = std::min(view.find(' ', type), end);
     if (type < type_end && scalar_types.count(view.substr(type, type_end - type))) {
       const size_t name_end = view.find_first_of(" =", type_end + 1);
-      if (name_end < end && view.substr(name_end, 4) == " = [") {
+      const std::string_view name = view.substr(type_end + 1, name_end - type_end - 1);
+      const std::string_view connect = ".connect";
+      const bool is_connection = name.size() >= connect.size() &&
+                                 name.substr(name.size() - connect.size()) == connect;
+      if (name_end < end && view.substr(name_end, 4) == " = [" && !is_connection) {
         fixed.append(view.substr(copied, type_end - copied)).append("[]");
         copied = type_end;
       }
