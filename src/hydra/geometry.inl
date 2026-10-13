@@ -6,8 +6,8 @@
 #include "hydra/geometry.h"
 #include "hydra/instancer.h"
 #include "hydra/material.h"
-#include "hydra/session.h"
 #include "hydra/node_util.h"
+#include "hydra/session.h"
 #include "hydra/util.h"
 #include "scene/geometry.h"
 #include "scene/object.h"
@@ -27,7 +27,7 @@ extern Transform convert_transform(const GfMatrix4d &matrix);
 
 template<typename Base, typename CyclesBase>
 HdCyclesGeometry<Base, CyclesBase>::HdCyclesGeometry(const SdfPath &rprimId)
-    : Base(rprimId), _geomTransform(1.0)
+    : Base(rprimId), _geomTransforms{GfMatrix4d(1.0)}
 {
 }
 
@@ -116,9 +116,12 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
   }
 
   if (HdChangeTracker::IsTransformDirty(*dirtyBits, id)) {
-    _geomTransform = GfMatrix4d(1.0);
+    _geomTransforms = {GfMatrix4d(1.0)};
     if (auto matrixDs = HdXformSchema::GetFromParent(primDs).GetMatrix()) {
-      _geomTransform = matrixDs->GetTypedValue(0.0f);
+      _geomTransforms = SampleMotion<GfMatrix4d>(
+          matrixDs,
+          static_cast<HdCyclesSession *>(renderParam)->motion_times,
+          [&](const float time) { return matrixDs->GetTypedValue(time); });
     }
   }
 
@@ -156,14 +159,22 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
       InitializeInstance(static_cast<int>(i));
     }
 
-    // Update transforms of all instances
+    // Update transforms of all instances, with their motion over the shutter.
+    // shortcut: the motion of the instancer itself is not sampled, only the prototype's.
+    const float metersPerUnit =
+        static_cast<HdCyclesSession *>(renderParam)->GetStageMetersPerUnit();
+    const Transform scale = transform_scale(make_float3(metersPerUnit));
     for (size_t i = 0; i < transforms.size(); ++i) {
-      const float metersPerUnit =
-          static_cast<HdCyclesSession *>(renderParam)->GetStageMetersPerUnit();
-
-      const Transform tfm = transform_scale(make_float3(metersPerUnit)) *
-                            convert_transform(_geomTransform * transforms[i]);
-      _instances[i]->set_tfm(tfm);
+      array<Transform> motion;
+      if (_geomTransforms.size() > 1) {
+        motion.resize(_geomTransforms.size());
+        for (size_t step = 0; step < _geomTransforms.size(); ++step) {
+          motion[step] = scale * convert_transform(_geomTransforms[step] * transforms[i]);
+        }
+      }
+      _instances[i]->set_tfm(
+          scale * convert_transform(_geomTransforms[_geomTransforms.size() / 2] * transforms[i]));
+      _instances[i]->set_motion(motion);
     }
 
     // Cryptomatte object and asset names: the scene path of each instance, when the scene has it.
@@ -251,7 +262,8 @@ void HdCyclesGeometry<Base, CyclesBase>::UpdateObjectSettings(
     }
 
     const ustring socketName(setting);
-    const bool known = std::find(std::begin(objectSettings), std::end(objectSettings),
+    const bool known = std::find(std::begin(objectSettings),
+                                 std::end(objectSettings),
                                  socketName) != std::end(objectSettings);
     const SocketType *socket = known ? Object::get_node_type()->find_input(socketName) : nullptr;
     if (!socket) {

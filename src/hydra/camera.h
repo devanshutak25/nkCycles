@@ -52,7 +52,8 @@ class HdCyclesCamera final : public PXR_NS::HdCamera {
 
  private:
   PXR_NS::GfCamera _data;
-  PXR_NS::HdTimeSampleArray<PXR_NS::GfMatrix4d, 2> _transformSamples;
+  /* Transforms of the motion steps, or one without motion. */
+  std::vector<PXR_NS::GfMatrix4d> _transforms;
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

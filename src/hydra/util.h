@@ -8,6 +8,8 @@
 #include "hydra/config.h"
 #include "scene/attribute.h"
 
+#include <algorithm>
+
 #include <pxr/base/vt/value.h>
 #include <pxr/imaging/hd/dataSource.h>
 #include <pxr/imaging/hd/enums.h>
@@ -67,31 +69,32 @@ T GetTypedValue(const PXR_NS::HdContainerDataSourceHandle &container,
   return fallback;
 }
 
-/* Sample a typed data source over the shutter into `out`. */
-template<typename T, unsigned int Capacity>
-void SampleTyped(const typename PXR_NS::HdTypedSampledDataSource<T>::Handle &ds,
-                 float shutterOpen,
-                 float shutterClose,
-                 PXR_NS::HdTimeSampleArray<T, Capacity> *out)
+/* Values of a data source at the shutter offsets of the motion steps (HdCyclesSession::
+ * motion_times), or only the value at offset 0 without motion blur or when it does not change
+ * over the shutter. get(time) reads the value. */
+template<typename T, typename Get>
+std::vector<T> SampleMotion(const PXR_NS::HdSampledDataSourceHandle &ds,
+                            const std::vector<float> &times,
+                            const Get &get)
 {
-  if (!ds) {
-    out->Resize(0);
-    return;
+  std::vector<T> values;
+  std::vector<float> sampleTimes;
+  if (times.size() > 1 &&
+      ds->GetContributingSampleTimesForInterval(times.front(), times.back(), &sampleTimes))
+  {
+    for (const float time : times) {
+      values.push_back(get(time));
+    }
+    if (std::all_of(
+            values.begin(), values.end(), [&](const T &value) { return value == values.front(); }))
+    {
+      values.clear();
+    }
   }
-  std::vector<float> times;
-  const bool hasSamples = ds->GetContributingSampleTimesForInterval(
-      shutterOpen, shutterClose, &times);
-  if (!hasSamples || times.empty()) {
-    out->Resize(1);
-    out->times[0] = 0.0f;
-    out->values[0] = ds->GetTypedValue(0.0f);
-    return;
+  if (values.empty()) {
+    values.push_back(get(0.0f));
   }
-  out->Resize(times.size());
-  for (size_t i = 0; i < times.size(); ++i) {
-    out->times[i] = times[i];
-    out->values[i] = ds->GetTypedValue(times[i]);
-  }
+  return values;
 }
 
 /* Read a primvar's value at shutter offset 0. */

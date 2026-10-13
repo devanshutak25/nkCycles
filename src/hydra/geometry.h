@@ -42,7 +42,8 @@ template<typename Base, typename CyclesBase> class HdCyclesGeometry : public Bas
   void InitializeInstance(const int index);
   void UpdateObjectSettings(const PXR_NS::HdContainerDataSourceHandle &primDs);
 
-  PXR_NS::GfMatrix4d _geomTransform;
+  /* Transforms of the motion steps, or one without motion. */
+  std::vector<PXR_NS::GfMatrix4d> _geomTransforms;
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

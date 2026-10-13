@@ -33,7 +33,8 @@ class HdCyclesFileReader {
   HdCyclesFileReader(Session *session,
                      const PXR_NS::UsdStageRefPtr &stage,
                      double meters_per_unit,
-                     bool keep_nodes = false);
+                     bool keep_nodes = false,
+                     const std::vector<float> &motion_times = {});
   ~HdCyclesFileReader();
 
   /* Sync the stage changes since the last sync, at the given time. Returns false when

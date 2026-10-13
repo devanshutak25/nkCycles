@@ -5,6 +5,7 @@
 #include "hydra/file_reader.h"
 #include "hydra/camera.h"
 #include "hydra/render_delegate.h"
+#include "hydra/session.h"
 
 #include "util/log.h"
 #include "util/path.h"
@@ -116,7 +117,8 @@ struct HdCyclesFileReader::State {
 HdCyclesFileReader::HdCyclesFileReader(Session *session,
                                        const UsdStageRefPtr &stage,
                                        const double meters_per_unit,
-                                       const bool keep_nodes)
+                                       const bool keep_nodes,
+                                       const std::vector<float> &motion_times)
     : state_(make_unique<State>())
 {
   State &state = *state_;
@@ -132,6 +134,8 @@ HdCyclesFileReader::HdCyclesFileReader(Session *session,
       std::make_pair(HdCyclesRenderSettingsTokens->stageMetersPerUnit, VtValue(meters_per_unit)));
 
   state.render_delegate = make_unique<HdCyclesDelegate>(settings_map, session, keep_nodes);
+  static_cast<HdCyclesSession *>(state.render_delegate->GetRenderParam())->motion_times =
+      motion_times;
 
   /* Create render index. */
   state.render_index.reset(HdRenderIndex::New(state.render_delegate.get(), {}));
@@ -215,6 +219,17 @@ bool HdCyclesFileReader::sync(const UsdTimeCode time,
   state.stage_si->SetTime(time);
   state.stage_si->ApplyPendingUpdates();
 #else
+  /* USD imaging samples motion over the shutter of its sampling camera. */
+  if (static_cast<HdCyclesSession *>(state.render_delegate->GetRenderParam())
+          ->motion_times.size() > 1)
+  {
+    for (const UsdPrim &prim : state.stage->Traverse()) {
+      if (prim.IsA<UsdGeomCamera>() && (camera_path.IsEmpty() || prim.GetPath() == camera_path)) {
+        state.scene_delegate->SetCameraForSampling(prim.GetPath());
+        break;
+      }
+    }
+  }
   state.scene_delegate->ApplyPendingUpdates();
   state.scene_delegate->SetTime(time);
 #endif

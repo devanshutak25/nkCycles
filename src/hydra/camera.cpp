@@ -53,7 +53,7 @@ HdDirtyBits HdCyclesCamera::GetInitialDirtyBitsMask() const
 }
 
 void HdCyclesCamera::Sync(HdSceneDelegate *sceneDelegate,
-                          HdRenderParam * /*renderParam*/,
+                          HdRenderParam *renderParam,
                           HdDirtyBits *dirtyBits)
 {
   if (*dirtyBits == DirtyBits::Clean) {
@@ -67,34 +67,15 @@ void HdCyclesCamera::Sync(HdSceneDelegate *sceneDelegate,
   HdCyclesCameraSchema cameraSchema = HdCameraSchema::GetFromParent(primDs);
   HdContainerDataSourceHandle cameraDs = cameraSchema.GetContainer();
 
-  /* Read the shutter window from the camera prim so animated transforms can
-   * be sampled across it for motion blur. */
-  float shutterOpen = 0.0f;
-  float shutterClose = 0.0f;
-  if (auto ds = cameraSchema.GetShutterOpen()) {
-    shutterOpen = float(ds->GetTypedValue(0.0f));
-  }
-  if (auto ds = cameraSchema.GetShutterClose()) {
-    shutterClose = float(ds->GetTypedValue(0.0f));
-  }
-
   if (*dirtyBits & DirtyBits::DirtyTransform) {
     HdXformSchema xformSchema = HdXformSchema::GetFromParent(primDs);
     if (auto matrixDs = xformSchema.GetMatrix()) {
-      SampleTyped<GfMatrix4d, 2>(matrixDs, shutterOpen, shutterClose, &_transformSamples);
-      bool transform_found = false;
-      for (size_t i = 0; i < _transformSamples.count; ++i) {
-        if (_transformSamples.times[i] == 0.0f) {
-          _transform = _transformSamples.values[i];
-          _data.SetTransform(_transform);
-          transform_found = true;
-          break;
-        }
-      }
-      if (!transform_found && _transformSamples.count) {
-        _transform = _transformSamples.values[0];
-        _data.SetTransform(_transform);
-      }
+      _transforms = SampleMotion<GfMatrix4d>(
+          matrixDs,
+          static_cast<HdCyclesSession *>(renderParam)->motion_times,
+          [&](const float time) { return matrixDs->GetTypedValue(time); });
+      _transform = _transforms[_transforms.size() / 2];
+      _data.SetTransform(_transform);
     }
   }
 
@@ -185,9 +166,12 @@ void HdCyclesCamera::ApplyCameraSettings(HdRenderParam *renderParam,
 
   const float metersPerUnit = static_cast<HdCyclesSession *>(renderParam)->GetStageMetersPerUnit();
 
-  array<Transform> motion(_transformSamples.count);
-  for (size_t i = 0; i < _transformSamples.count; ++i) {
-    motion[i] = convert_camera_transform(_transformSamples.values[i], metersPerUnit);
+  array<Transform> motion;
+  if (_transforms.size() > 1) {
+    motion.resize(_transforms.size());
+    for (size_t i = 0; i < _transforms.size(); ++i) {
+      motion[i] = convert_camera_transform(_transforms[i], metersPerUnit);
+    }
   }
   cam->set_motion(motion);
 }

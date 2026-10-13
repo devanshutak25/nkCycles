@@ -14,6 +14,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 HDCYCLES_NAMESPACE_OPEN_SCOPE
 
@@ -99,6 +100,9 @@ class HdCyclesSession final : public PXR_NS::HdRenderParam {
 
   CCL_NS::Session *session;
   bool keep_nodes;
+  /* Shutter offsets of the motion blur steps, in time codes from the synced time: an odd count
+   * with 0 in the middle. Empty without motion blur. */
+  std::vector<float> motion_times;
 
  private:
   const bool _ownCyclesSession;

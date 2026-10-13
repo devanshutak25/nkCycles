@@ -162,7 +162,28 @@ void HdCyclesMesh::PopulatePoints(HdSceneDelegate *sceneDelegate)
 {
   const HdSceneIndexPrim prim = GetPrim(sceneDelegate, GetId());
   HdPrimvarsSchema primvars = HdPrimvarsSchema::GetFromParent(prim.dataSource);
-  const VtValue value = ReadPrimvar(primvars, HdTokens->points);
+  const HdSampledDataSourceHandle pointsDs =
+      primvars ? primvars.GetPrimvar(HdTokens->points).GetPrimvarValue() :
+                 HdSampledDataSourceHandle();
+  if (!pointsDs) {
+    TF_WARN("Invalid points data for %s", GetId().GetText());
+    return;
+  }
+
+  /* Points of the motion steps, when they move over the shutter. */
+  const HdCyclesSession *session = static_cast<const HdCyclesSession *>(
+      sceneDelegate->GetRenderIndex().GetRenderDelegate()->GetRenderParam());
+  std::vector<VtValue> steps = SampleMotion<VtValue>(
+      pointsDs, session->motion_times, [&](const float time) { return pointsDs->GetValue(time); });
+  const size_t numPoints = _topology.GetNumPoints();
+  for (const VtValue &step : steps) {
+    if (!step.IsHolding<VtVec3fArray>() || step.UncheckedGet<VtVec3fArray>().size() < numPoints) {
+      /* shortcut: points that change in number over the shutter do not move. */
+      steps = {steps[steps.size() / 2]};
+      break;
+    }
+  }
+  const VtValue &value = steps[steps.size() / 2];
 
   if (!value.IsHolding<VtVec3fArray>()) {
     TF_WARN("Invalid points data for %s", GetId().GetText());
@@ -171,15 +192,34 @@ void HdCyclesMesh::PopulatePoints(HdSceneDelegate *sceneDelegate)
 
   const auto &points = value.UncheckedGet<VtVec3fArray>();
 
-  TF_VERIFY(points.size() >= static_cast<size_t>(_topology.GetNumPoints()));
+  TF_VERIFY(points.size() >= numPoints);
 
   const bool subdivision = _geom->get_subdivision_type() != Mesh::SUBDIVISION_NONE;
   AttributeSet &attributes = (subdivision) ? _geom->subd_attributes : _geom->attributes;
   Attribute *attr_P = attributes.add(ATTR_STD_POSITION);
   packed_float3 *verts = attr_P->data_for_write<packed_float3>();
 
-  std::copy_n(
-      reinterpret_cast<const packed_float3 *>(points.data()), _topology.GetNumPoints(), verts);
+  std::copy_n(reinterpret_cast<const packed_float3 *>(points.data()), numPoints, verts);
+
+  if (steps.size() > 1 && points.size() >= numPoints) {
+    const int numSteps = int(steps.size());
+    _geom->set_motion_steps(numSteps);
+    _geom->set_use_motion_blur(true);
+    attr_P->add_motion(_geom);
+    for (int step = 0; step < numSteps; step++) {
+      if (step != numSteps / 2) {
+        std::copy_n(
+            reinterpret_cast<const packed_float3 *>(
+                steps[step].UncheckedGet<VtVec3fArray>().data()),
+            numPoints,
+            attr_P->data_for_write<packed_float3>(attr_P->time_step_to_attr_step(step, numSteps)));
+      }
+    }
+  }
+  else {
+    _geom->set_use_motion_blur(false);
+    attr_P->remove_motion();
+  }
   _geom->tag_position_modified();
 }
 
