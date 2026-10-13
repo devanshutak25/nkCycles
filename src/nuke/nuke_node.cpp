@@ -326,6 +326,10 @@ class CyclesRender : public PlanarIop {
   void append(Hash &hash) override
   {
     hash.append(outputContext().frame());
+    /* An upstream FrameHold or TimeOffset changes the frame the scene is read at. */
+    if (Op *scene = Op::input(0)) {
+      hash.append(scene->outputContext().frame());
+    }
     enableVaryingOutputHash();
   }
 
@@ -553,12 +557,14 @@ class CyclesRender : public PlanarIop {
     auto prepared = std::make_shared<Prepared>();
     prepared->key = key;
     prepared->outputs = outputs;
+    /* The input is made at the frame that FrameHold or TimeOffset nodes before us map to. */
+    const double frame = geo ? geo->outputContext().frame() : outputContext().frame();
     usg::StageRef stage;
     if (geo) {
 #if kDDImageVersionInteger >= 161000
       /* The sample times are frames, like the time codes of the stage. */
       GeometryProviderI::BuildStage(
-          stage, usg::ArgSet(), OpGraphLocation(geo), fdk::TimeValueSet{outputContext().frame()});
+          stage, usg::ArgSet(), OpGraphLocation(geo), fdk::TimeValueSet{frame});
 #else
       GeomOp::buildStage(stage, usg::ArgSet(), geo);
 #endif
@@ -577,7 +583,7 @@ class CyclesRender : public PlanarIop {
       options.device = kDevices[_device];
       options.denoise = _denoise;
       options.camera = _camera;
-      options.frame = outputContext().frame();
+      options.frame = frame;
       options.passes = passes;
       std::set<Op *> visited;
       collect_attributes(geo, visited, options.attributes);
