@@ -35,6 +35,7 @@ const char *const kUsage =
     "  --device <name>             AUTO, OPTIX, CUDA or CPU (default CPU)\n"
     "  --denoise <0|1>             denoise (default 0)\n"
     "  --frame <f>                 time code (default 1)\n"
+    "  --motion <shutter> <steps>  motion blur over a shutter centered on the frame, odd steps\n"
     "  --camera <path>             camera prim (default the first)\n"
     "  --pass <name:type:n>        a Cycles pass with n components, e.g. depth:depth:1\n"
     "  --cryptomatte <type>        object, material or asset, with 3 layers\n"
@@ -213,6 +214,10 @@ int main(int argc, char **argv)
     }
     else if (arg == "--frame") {
       options.frame = std::stod(value());
+    }
+    else if (arg == "--motion") {
+      options.shutter = std::stod(value());
+      options.motion_steps = std::stoi(value());
     }
     else if (arg == "--camera") {
       options.camera = value();
