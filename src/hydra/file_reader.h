@@ -37,11 +37,13 @@ class HdCyclesFileReader {
   ~HdCyclesFileReader();
 
   /* Sync the stage changes since the last sync, at the given time. Returns false when
-   * use_camera is set and there is no matching camera. */
+   * use_camera is set and there is no matching camera, else gives the path of the camera used
+   * in synced_camera. */
   bool sync(PXR_NS::UsdTimeCode time,
             const PXR_NS::SdfPath &camera_path,
             const bool use_camera = true,
-            PXR_NS::CameraUtilConformWindowPolicy window_policy = PXR_NS::CameraUtilFit);
+            PXR_NS::CameraUtilConformWindowPolicy window_policy = PXR_NS::CameraUtilFit,
+            PXR_NS::SdfPath *synced_camera = nullptr);
 
  private:
   struct State;

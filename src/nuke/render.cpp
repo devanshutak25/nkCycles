@@ -256,6 +256,41 @@ void set_attribute(const UsdStageRefPtr &stage, const AttributeValue &value)
   }
 }
 
+/* Nuke's camera window, which replaces the aperture offsets: Nuke 17 writes win_translate with
+ * the vertical aperture for y, which Nuke's projection does not use. The camera is set again by
+ * each sync, so this lasts for one render. */
+void apply_camera_window(Camera *camera, const CameraWindow &window, const double meters_per_unit)
+{
+  float half_width = 0.5f * (camera->get_viewplane_right() - camera->get_viewplane_left());
+  float half_height = 0.5f * (camera->get_viewplane_top() - camera->get_viewplane_bottom());
+  if (window.ortho_width > 0.0) {
+    /* Nuke's orthographic camera sees haperture / focal scene units, USD's haperture / 10. */
+    const float scale = 0.5f * float(window.ortho_width * meters_per_unit) / half_width;
+    half_width *= scale;
+    half_height *= scale;
+  }
+  /* The window turned by the roll, with the camera turned back. */
+  const float roll = float(window.roll) * M_PI_F / 180.0f;
+  const float c = cosf(roll), s = sinf(roll);
+  const float tx = float(window.translate[0]), ty = float(window.translate[1]);
+  const float center_x = half_width * (c * tx - s * ty);
+  const float center_y = half_width * (s * tx + c * ty);
+  camera->set_viewplane_left(center_x - float(window.scale[0]) * half_width);
+  camera->set_viewplane_right(center_x + float(window.scale[0]) * half_width);
+  camera->set_viewplane_bottom(center_y - float(window.scale[1]) * half_height);
+  camera->set_viewplane_top(center_y + float(window.scale[1]) * half_height);
+  if (roll != 0.0f) {
+    /* shortcut: a roll with a non-uniform win_scale is a shear in Nuke, a rotation here. */
+    const Transform rotation = transform_rotate(-roll, make_float3(0.0f, 0.0f, 1.0f));
+    camera->set_matrix(camera->get_matrix() * rotation);
+    array<Transform> motion = camera->get_motion();
+    for (Transform &step : motion) {
+      step = step * rotation;
+    }
+    camera->set_motion(motion);
+  }
+}
+
 /* Session of the last render with its scene, so the next render only syncs the scene changes
  * and keeps the device, kernels and unchanged geometry. */
 struct CachedSession {
@@ -405,12 +440,22 @@ std::string render(const std::string &usd_text, const RenderOptions &options, Re
   scene->camera->set_full_height(options.height);
 
   /* Nuke fits the horizontal aperture to the image width. */
+  SdfPath camera_path;
   if (!cached->reader->sync(UsdTimeCode(options.frame),
                             options.camera.empty() ? SdfPath() : SdfPath(options.camera),
                             true,
-                            CameraUtilMatchHorizontally))
+                            CameraUtilMatchHorizontally,
+                            &camera_path))
   {
     return options.camera.empty() ? "No camera in the scene" : "No camera at " + options.camera;
+  }
+  /* Nuke 15 puts the Camera prim under the prim of the camera node. */
+  for (const SdfPath &path : {camera_path, camera_path.GetParentPath()}) {
+    const auto window = options.camera_windows.find(path.GetString());
+    if (window != options.camera_windows.end()) {
+      apply_camera_window(scene->camera, window->second, meters_per_unit);
+      break;
+    }
   }
   /* Each sync applies the camera again, so this lasts for this render only. */
   if (!options.depth_of_field) {

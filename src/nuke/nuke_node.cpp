@@ -538,13 +538,12 @@ class CyclesRender : public PlanarIop {
   }
 
   /* Values of the light and camera knobs Nuke does not write into the stage. */
-  void collect_attributes(Op *op,
-                          std::set<Op *> &visited,
-                          std::vector<nkcycles::AttributeValue> &values) const
+  void collect_attributes(Op *op, std::set<Op *> &visited, nkcycles::RenderOptions &options) const
   {
     if (!op || !visited.insert(op).second) {
       return;
     }
+    std::vector<nkcycles::AttributeValue> &values = options.attributes;
     const std::string prim = light_or_camera_prim(op);
     if (!prim.empty()) {
       if (dynamic_cast<LightOp *>(op)) {
@@ -593,12 +592,32 @@ class CyclesRender : public PlanarIop {
                             {},
                             true});
         }
+        const auto knob_value = [op](const char *name, int index, double fallback) {
+          Knob *knob = op->knob(name);
+          return knob ? knob->get_value_at(op->outputContext(), index) : fallback;
+        };
+        nkcycles::CameraWindow window;
+        window.translate[0] = knob_value("win_translate", 0, 0.0);
+        window.translate[1] = knob_value("win_translate", 1, 0.0);
+        window.scale[0] = knob_value("win_scale", 0, 1.0);
+        window.scale[1] = knob_value("win_scale", 1, 1.0);
+        window.roll = knob_value("winroll", 0, 0.0);
+        /* projection_mode: perspective, orthographic, uv, spherical. */
+        const double focal = knob_value("focal", 0, 0.0);
+        if (knob_value("projection_mode", 0, 0.0) == 1.0 && focal > 0.0) {
+          window.ortho_width = knob_value("haperture", 0, 0.0) / focal;
+        }
+        if (window.translate[0] != 0.0 || window.translate[1] != 0.0 || window.scale[0] != 1.0 ||
+            window.scale[1] != 1.0 || window.roll != 0.0 || window.ortho_width != 0.0)
+        {
+          options.camera_windows[prim] = window;
+        }
       }
     }
     /* Inputs not in use may be out of date. */
     for (int i = 0; i < op->inputs(); i++) {
       if (op->uses_input(i) > 0.0f) {
-        collect_attributes(op->input(i), visited, values);
+        collect_attributes(op->input(i), visited, options);
       }
     }
   }
@@ -649,7 +668,7 @@ class CyclesRender : public PlanarIop {
       options.frame = frame;
       options.passes = passes;
       std::set<Op *> visited;
-      collect_attributes(geo, visited, options.attributes);
+      collect_attributes(geo, visited, options);
 
       /* Images of Nuke nodes used as textures, by their asset path in the scene. */
       std::set<std::string> paths;

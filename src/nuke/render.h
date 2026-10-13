@@ -38,6 +38,17 @@ struct AttributeValue {
   bool force = false;
 };
 
+/* Knobs of a Nuke camera that the stage does not carry, or not the way Nuke uses them. */
+struct CameraWindow {
+  /* win_translate, win_scale and winroll (degrees), in film coordinates where the image width
+   * spans -1 to 1 and y has the same scale. */
+  double translate[2] = {0.0, 0.0};
+  double scale[2] = {1.0, 1.0};
+  double roll = 0.0;
+  /* Width an orthographic camera sees in scene units, 0 for other cameras. */
+  double ortho_width = 0.0;
+};
+
 /* A Nuke image used as texture. */
 struct Image {
   int width = 0;
@@ -60,6 +71,8 @@ struct RenderOptions {
   double frame = 0.0;
   std::vector<PassRequest> passes;
   std::vector<AttributeValue> attributes;
+  /* By the prim path of the camera node. */
+  std::map<std::string, CameraWindow> camera_windows;
   /* Images of Nuke nodes by the asset path the scene refers to them with ("nkop:/NkRoot/..."). */
   std::map<std::string, std::shared_ptr<const Image>> images;
   /* Polled during the render, return true to cancel. */

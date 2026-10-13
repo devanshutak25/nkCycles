@@ -205,7 +205,8 @@ HdCyclesFileReader::~HdCyclesFileReader() = default;
 bool HdCyclesFileReader::sync(const UsdTimeCode time,
                               const SdfPath &camera_path,
                               const bool use_camera,
-                              const CameraUtilConformWindowPolicy window_policy)
+                              const CameraUtilConformWindowPolicy window_policy,
+                              SdfPath *synced_camera)
 {
   State &state = *state_;
 
@@ -244,6 +245,9 @@ bool HdCyclesFileReader::sync(const UsdTimeCode time,
         camera->SetWindowPolicy(window_policy);
         camera->ApplyCameraSettings(state.render_delegate->GetRenderParam(),
                                     state.session->scene->camera);
+        if (synced_camera) {
+          *synced_camera = prim.GetPath();
+        }
         return true;
       }
     }
