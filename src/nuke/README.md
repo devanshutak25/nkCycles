@@ -17,6 +17,27 @@ nuke.pluginAddPath("C:/path/to/install-nuke15.0v1")
 
 The node is in *3D > CyclesRender*.
 
+## Usage
+
+- **Materials:** `PreviewSurface`, and images bound directly with `GeoBindMaterial` (lit by the
+  scene lights). Images connected to material inputs are used as textures, the color knobs
+  multiply them.
+- **Lights:** `DirectLight1`, `PointLight`, `SpotLight1` and `EnvironmentLight` (with its image).
+  Intensities follow USD lights: a `DirectLight1` gives the light of a sun disc of its angle, so
+  turn *normalize* on to make the intensity the irradiance.
+- **Outputs:** like ScanlineRender, *depth* (1/z in scene units, 0 for the background,
+  `depth.Z` by default), *normal* and *position* (world space) and *albedo* go to the channels
+  picked in their knobs. The light pass toggles add layers named like Blender's, which add up
+  to the (not denoised) beauty:
+  `(DiffDir + DiffInd) * DiffCol + (GlossDir + GlossInd) * GlossCol +
+  (TransDir + TransInd) * TransCol + VolumeDir + VolumeInd + Emit + Env`.
+  The cryptomatte toggles add `CryptoObject00`, ... layers with their metadata, for Nuke's
+  Cryptomatte node.
+- **Depth of field** uses the camera's focal distance and f-stop when turned on.
+
+The render is kept for all layers of a frame, and the Cycles session between renders, so
+changing a light or a knob only updates what changed.
+
 ## Build
 
 Nuke ships USD libraries but no USD headers. Prepare headers of the OpenUSD release Nuke was
@@ -48,13 +69,19 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ^
   -DNUKE_IMPLIB_DIR=implibs-nuke15 ^
   -DWITH_CYCLES_HYDRA_RENDER_DELEGATE=ON ^
   -DWITH_CYCLES_DEVICE_OPTIX=ON -DOPTIX_ROOT_DIR=... ^
+  -DWITH_CYCLES_OSL=OFF ^
   -DCMAKE_INSTALL_PREFIX=install-nuke15.0v1
 cmake --build build --target install
 ```
 
-The install step renames bundled libraries that Nuke also loads in another version
-(OpenEXR, Imath) with `rename_dlls.py`, so both can be loaded.
+OSL is not used by the node. A static Embree (`-DEMBREE_ROOT_DIR=...`) avoids installing the
+precompiled shared one, which brings the SYCL runtime.
+
+The install step copies the libraries the node uses, and renames bundled libraries that Nuke
+also loads in another version (OpenEXR, Imath) with `rename_dlls.py`, so both can be loaded.
+Install into an empty folder: files of earlier installs are not removed.
 
 ## Debugging
 
-Set `NKCYCLES_DUMP_USD=<file>` to write the scene the node receives from Nuke as USD text.
+Set `NKCYCLES_DUMP_USD=<file.usda>` to write the scene that is rendered: the scene from Nuke,
+with the light and camera knob values Nuke does not write into it.
