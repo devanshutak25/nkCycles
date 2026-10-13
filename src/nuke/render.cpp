@@ -7,6 +7,7 @@
 #include "hydra/file_reader.h"
 #include "hydra/render_delegate.h"
 
+#include "scene/background.h"
 #include "scene/camera.h"
 #include "scene/film.h"
 #include "scene/image.h"
@@ -483,6 +484,9 @@ std::string render(const std::string &usd_text, const RenderOptions &options, Re
       break;
     }
   }
+  /* Nuke composites renders: an environment light lights the scene but is not seen behind it,
+   * like in ScanlineRender2. */
+  scene->background->set_transparent(true);
   /* Each sync applies the camera again, so this lasts for this render only. */
   if (!options.depth_of_field) {
     scene->camera->set_aperturesize(0.0f);
