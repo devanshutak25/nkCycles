@@ -714,8 +714,14 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
                           nodeDesc.node->type == PrincipledBsdfNode::get_node_type() &&
                           dstSocketName == CyclesMaterialTokens->normal;
 
+    /* A normal map texture without scale and bias (as Nuke authors it) gives the color the
+     * normal map node takes, the usual scale 2 and bias -1 map it to -1..1. */
+    const bool normalMapColor = toNormal && fromTexture &&
+                                _textureScaleBias[upstreamNodePath].scale == GfVec4f(1.0f) &&
+                                _textureScaleBias[upstreamNodePath].bias == GfVec4f(0.0f);
+
     /* Scale and bias of an UsdUVTexture, after its color or alpha. */
-    if (fromTexture && !toNormal) {
+    if (fromTexture && !normalMapColor) {
       const TextureScaleBias &scaleBias = _textureScaleBias[upstreamNodePath];
       ShaderNode *math;
       if (output->name() == "Alpha") {
@@ -735,9 +741,9 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
       SetTextureScaleBias(math, scaleBias.scale, scaleBias.bias);
 
       /* The r, g and b outputs are one channel of the color. */
-      if (upstreamOutputName == CyclesMaterialTokens->r ||
-          upstreamOutputName == CyclesMaterialTokens->g ||
-          upstreamOutputName == CyclesMaterialTokens->b)
+      if (!toNormal && (upstreamOutputName == CyclesMaterialTokens->r ||
+                        upstreamOutputName == CyclesMaterialTokens->g ||
+                        upstreamOutputName == CyclesMaterialTokens->b))
       {
         SeparateXYZNode *separate = shaderGraph->create_node<SeparateXYZNode>();
         shaderGraph->connect(output, separate->input("Vector"));
@@ -747,11 +753,9 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
       }
     }
 
-    /* The UsdPreviewSurface normal is in tangent space, the BSDF takes a world space normal.
-     * The normal map node takes the color of a normal map texture, without the scale and bias
-     * that map it to -1..1 (Nuke leaves them at 1 and 0). */
+    /* The UsdPreviewSurface normal is in tangent space, the BSDF takes a world space normal. */
     if (toNormal) {
-      if (!fromTexture) {
+      if (!normalMapColor) {
         VectorMathNode *color = shaderGraph->create_node<VectorMathNode>();
         color->set_math_type(NODE_VECTOR_MATH_MULTIPLY_ADD);
         color->set_vector2(make_float3(0.5f, 0.5f, 0.5f));
