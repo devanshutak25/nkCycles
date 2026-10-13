@@ -525,6 +525,21 @@ static bool IsIdentityTransform2d(HdMaterialNodeSchema nodeSchema)
   return true;
 }
 
+/* Set the scale and bias of an UsdUVTexture on a multiply-add node after its color or alpha. */
+static void SetTextureScaleBias(ShaderNode *node, const GfVec4f &scale, const GfVec4f &bias)
+{
+  if (node->type == VectorMathNode::get_node_type()) {
+    VectorMathNode *math = static_cast<VectorMathNode *>(node);
+    math->set_vector2(make_float3(scale[0], scale[1], scale[2]));
+    math->set_vector3(make_float3(bias[0], bias[1], bias[2]));
+  }
+  else {
+    MathNode *math = static_cast<MathNode *>(node);
+    math->set_value2(scale[3]);
+    math->set_value3(bias[3]);
+  }
+}
+
 void HdCyclesMaterial::UpdateParameters(NodeDesc &nodeDesc,
                                         HdMaterialNodeParameterContainerSchema params,
                                         const SdfPath &nodePath)
@@ -535,6 +550,20 @@ void HdCyclesMaterial::UpdateParameters(NodeDesc &nodeDesc,
       continue;
     }
     VtValue value = valueDs->GetValue(0.0f);
+
+    /* UsdUVTexture scale and bias multiply the texture, the image texture node has none. Its
+     * "Scale" input would scale the texture coordinates. */
+    if (nodeDesc.mapping && nodeDesc.node->type == ImageTextureNode::get_node_type() &&
+        (paramName == "scale" || paramName == "bias"))
+    {
+      TextureScaleBias &scaleBias = _textureScaleBias[nodePath];
+      if (value.CanCast<GfVec4f>()) {
+        (paramName == "scale" ?
+             scaleBias.scale :
+             scaleBias.bias) = VtValue::Cast<GfVec4f>(value).UncheckedGet<GfVec4f>();
+      }
+      continue;
+    }
 
     /* See if the parameter name is in USDPreviewSurface terms, and needs to be converted .*/
     const UsdToCyclesMapping *inputMapping = nodeDesc.mapping;
@@ -694,6 +723,27 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
       continue;
     }
 
+    /* Scale and bias of an UsdUVTexture, after its color or alpha. */
+    if (outputMapping && srcNodeIt->second.node->type == ImageTextureNode::get_node_type()) {
+      const TextureScaleBias &scaleBias = _textureScaleBias[upstreamNodePath];
+      ShaderNode *math;
+      if (output->name() == "Alpha") {
+        MathNode *mathNode = shaderGraph->create_node<MathNode>();
+        mathNode->set_math_type(NODE_MATH_MULTIPLY_ADD);
+        shaderGraph->connect(output, mathNode->input("Value1"));
+        output = mathNode->output("Value");
+        math = mathNode;
+      }
+      else {
+        VectorMathNode *mathNode = shaderGraph->create_node<VectorMathNode>();
+        mathNode->set_math_type(NODE_VECTOR_MATH_MULTIPLY_ADD);
+        shaderGraph->connect(output, mathNode->input("Vector1"));
+        output = mathNode->output("Vector");
+        math = mathNode;
+      }
+      SetTextureScaleBias(math, scaleBias.scale, scaleBias.bias);
+    }
+
     shaderGraph->connect(output, input);
   }
 }
@@ -702,6 +752,7 @@ unique_ptr<ShaderGraph> HdCyclesMaterial::BuildShaderGraph(HdMaterialNetworkSche
 {
   _nodes.clear();
   _passThrough.clear();
+  _textureScaleBias.clear();
 
   unique_ptr<ShaderGraph> graph = make_unique<ShaderGraph>();
 

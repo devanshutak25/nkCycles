@@ -10,6 +10,7 @@
 #include "util/unique_ptr.h"
 
 #include "hydra/usd_compat.h"
+#include <pxr/base/gf/vec4f.h>
 #include <pxr/imaging/hd/material.h>
 #include <pxr/imaging/hd/materialNetworkSchema.h>
 #include <pxr/imaging/hd/materialNodeSchema.h>
@@ -60,6 +61,12 @@ class HdCyclesMaterial final : public PXR_NS::HdMaterial {
                      std::pair<PXR_NS::SdfPath, PXR_NS::TfToken>,
                      PXR_NS::SdfPath::Hash>
       _passThrough;
+  /* Scale and bias of UsdUVTexture nodes, applied by multiply-add nodes after the outputs. */
+  struct TextureScaleBias {
+    PXR_NS::GfVec4f scale = PXR_NS::GfVec4f(1.0f);
+    PXR_NS::GfVec4f bias = PXR_NS::GfVec4f(0.0f);
+  };
+  std::unordered_map<PXR_NS::SdfPath, TextureScaleBias, PXR_NS::SdfPath::Hash> _textureScaleBias;
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE
