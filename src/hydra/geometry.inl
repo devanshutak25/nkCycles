@@ -14,8 +14,6 @@
 #include "scene/scene.h"
 #include "util/hash.h"
 
-#include <numeric>
-
 #include "hydra/usd_compat.h"
 #include <pxr/imaging/hd/materialBindingSchema.h>
 #include <pxr/imaging/hd/primvarsSchema.h>
@@ -168,15 +166,16 @@ void HdCyclesGeometry<Base, CyclesBase>::Sync(HdSceneDelegate *sceneDelegate,
       _instances[i]->set_tfm(tfm);
     }
 
-    // Cryptomatte object and asset names: the scene prims, not the Hydra ids, which differ for
-    // instanced prims (e.g. "/World/Instancer.proto0_Mesh_id0").
-    std::vector<int> instanceIndices(_instances.size());
-    std::iota(instanceIndices.begin(), instanceIndices.end(), 0);
-    const SdfPathVector scenePaths = sceneDelegate->GetScenePrimPaths(id, instanceIndices);
-    for (size_t i = 0; i < _instances.size() && i < scenePaths.size(); ++i) {
-      if (!scenePaths[i].IsEmpty()) {
-        _instances[i]->name = ustring(scenePaths[i].GetString());
-        _instances[i]->set_asset_name(ustring(scenePaths[i].GetParentPath().GetString()));
+    // Cryptomatte object and asset names: the scene path of each instance, when the scene has it.
+    // The Hydra ids of instanced prims have hashes that change between sessions with scene indices
+    // ("/UsdNiPropagatedPrototypes/NoPrimvars_purpose<hash>/...").
+    if (HdChangeTracker::IsInstancerDirty(*dirtyBits, id) || newSize != oldSize) {
+      const SdfPathVector scenePaths = GetInstanceScenePaths(sceneDelegate, id, newSize);
+      for (size_t i = 0; i < scenePaths.size(); ++i) {
+        if (!scenePaths[i].IsEmpty()) {
+          _instances[i]->name = ustring(scenePaths[i].GetString());
+          _instances[i]->set_asset_name(ustring(scenePaths[i].GetParentPath().GetString()));
+        }
       }
     }
   }

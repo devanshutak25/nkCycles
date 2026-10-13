@@ -27,6 +27,13 @@ HDCYCLES_NAMESPACE_OPEN_SCOPE
 /* Prim data source from the scene index, or empty if none is reachable. */
 PXR_NS::HdSceneIndexPrim GetPrim(PXR_NS::HdSceneDelegate *delegate, const PXR_NS::SdfPath &id);
 
+/* Scene paths of the instances of a prim, like Hydra's picking gives them: the prim origins of the
+ * native instances and of the prim, e.g. "/World/A/Box" and "/World/B/Box" for a prim of a native
+ * instance prototype. Empty when the scene has no prim origins (USD imaging delegate). */
+PXR_NS::SdfPathVector GetInstanceScenePaths(PXR_NS::HdSceneDelegate *delegate,
+                                            const PXR_NS::SdfPath &id,
+                                            size_t numInstances);
+
 /* Typed child data source, or null if missing or of a different type. */
 template<typename T>
 typename PXR_NS::HdTypedSampledDataSource<T>::Handle GetTypedDataSource(

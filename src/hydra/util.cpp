@@ -10,6 +10,9 @@
 #include <pxr/base/gf/vec3f.h>
 #include <pxr/base/gf/vec4f.h>
 #include <pxr/base/vt/array.h>
+#include <pxr/imaging/hd/instancedBySchema.h>
+#include <pxr/imaging/hd/instancerTopologySchema.h>
+#include <pxr/imaging/hd/primOriginSchema.h>
 #include <pxr/imaging/hd/primvarSchema.h>
 #include <pxr/imaging/hd/renderIndex.h>
 #include <pxr/imaging/hd/sceneDelegate.h>
@@ -27,6 +30,89 @@ HdSceneIndexPrim GetPrim(HdSceneDelegate *delegate, const SdfPath &id)
     return {};
   }
   return si->GetPrim(id);
+}
+
+/* Append a prim origin scene path: absolute paths replace, relative ones are inside the path. */
+static void AppendScenePath(const HdContainerDataSourceHandle &primDs, SdfPath &path)
+{
+  const SdfPath scenePath = HdPrimOriginSchema::GetFromParent(primDs).GetOriginPath(
+      HdPrimOriginSchemaTokens->scenePath);
+  if (!scenePath.IsEmpty()) {
+    path = scenePath.IsAbsolutePath() ? scenePath : path.AppendPath(scenePath);
+  }
+}
+
+SdfPathVector GetInstanceScenePaths(HdSceneDelegate *delegate,
+                                    const SdfPath &id,
+                                    const size_t numInstances)
+{
+  HdSceneIndexBaseRefPtr si = delegate ? delegate->GetRenderIndex().GetTerminalSceneIndex() :
+                                         nullptr;
+  if (!si) {
+    return {};
+  }
+  const HdContainerDataSourceHandle primDs = si->GetPrim(id).dataSource;
+  if (HdPrimOriginSchema::GetFromParent(primDs)
+          .GetOriginPath(HdPrimOriginSchemaTokens->scenePath)
+          .IsEmpty())
+  {
+    return {};
+  }
+
+  /* Instancers from the innermost: the instance indices of what they instance, and the paths of
+   * their native instances. */
+  struct Instancer {
+    VtIntArray indices;
+    VtArray<SdfPath> locations;
+  };
+  std::vector<Instancer> instancers;
+  SdfPath path = id;
+  HdContainerDataSourceHandle ds = primDs;
+  while (true) {
+    SdfPath instancerId;
+    if (auto pathsDs = HdInstancedBySchema::GetFromParent(ds).GetPaths()) {
+      const VtArray<SdfPath> paths = pathsDs->GetTypedValue(0.0f);
+      if (!paths.empty()) {
+        instancerId = paths.front();
+      }
+    }
+    if (instancerId.IsEmpty()) {
+      break;
+    }
+    ds = si->GetPrim(instancerId).dataSource;
+    HdInstancerTopologySchema topology = HdInstancerTopologySchema::GetFromParent(ds);
+    Instancer instancer;
+    instancer.indices = topology ? topology.ComputeInstanceIndicesForProto(path) : VtIntArray();
+    if (instancer.indices.empty()) {
+      break;
+    }
+    if (auto locationsDs = topology.GetInstanceLocations()) {
+      instancer.locations = locationsDs->GetTypedValue(0.0f);
+    }
+    instancers.push_back(instancer);
+    path = instancerId;
+  }
+
+  /* The flat instance index has the outermost instancer's index as most significant part. */
+  SdfPathVector paths(numInstances);
+  std::vector<SdfPath> instancePaths;
+  for (size_t i = 0; i < numInstances; i++) {
+    size_t index = i;
+    instancePaths.clear();
+    for (const Instancer &instancer : instancers) {
+      const int instance = instancer.indices[index % instancer.indices.size()];
+      index /= instancer.indices.size();
+      if (instance >= 0 && size_t(instance) < instancer.locations.size()) {
+        instancePaths.push_back(instancer.locations[instance]);
+      }
+    }
+    SdfPath &scenePath = paths[i];
+    for (auto it = instancePaths.rbegin(); it != instancePaths.rend(); ++it) {
+      AppendScenePath(si->GetPrim(*it).dataSource, scenePath);
+    }
+    AppendScenePath(primDs, scenePath);
+  }
+  return paths;
 }
 
 VtValue ReadPrimvar(HdPrimvarsSchema primvars, const TfToken &name)
