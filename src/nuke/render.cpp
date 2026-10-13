@@ -166,87 +166,39 @@ void set_attribute(const UsdStageRefPtr &stage, const AttributeValue &value)
   }
 }
 
-/* One render at a time: renders share the GPU, and Nuke may render several frames at once. */
+/* Session of the last render with its scene, so the next render only syncs the scene changes
+ * and keeps the device, kernels and unchanged geometry. */
+struct CachedSession {
+  SessionParams params;
+  unique_ptr<Session> session;
+  SdfLayerRefPtr layer;
+  UsdStageRefPtr stage;
+  double meters_per_unit = 0.0;
+  unique_ptr<HD_CYCLES_NS::HdCyclesFileReader> reader;
+  std::vector<PassRequest> passes;
+};
+
+/* shortcut: one session for all nodes, alternating nodes sync a whole scene each time. Keep one
+ * per node if that is common. Never deleted at exit, the CUDA library may already be unloaded. */
+CachedSession *cached = nullptr;
+
+/* One render at a time: renders share the session and the GPU, and Nuke may render several
+ * frames at once. */
 thread_mutex render_mutex;
 
-}  // namespace
-
-void init(const std::string &root_path)
+bool same_passes(const std::vector<PassRequest> &a, const std::vector<PassRequest> &b)
 {
-  path_init(root_path);
+  return std::equal(a.begin(), a.end(), b.begin(), b.end(), [](const auto &x, const auto &y) {
+    return x.name == y.name && x.type == y.type && x.channels == y.channels;
+  });
 }
 
-std::string render(const std::string &usd_text, const RenderOptions &options, RenderResult &result)
+/* Create the session passes. Cryptomatte passes are written for every rank of the enabled types,
+ * in a fixed order, so they are created from the type mask and depth. Returns an error message. */
+std::string create_passes(Scene *scene, const std::vector<PassRequest> &passes)
 {
-  result = RenderResult();
+  scene->delete_nodes(set<Pass *>(scene->passes.begin(), scene->passes.end()));
 
-  /* Write the scene as received from Nuke, for bug reports. */
-  if (const char *dump_path = getenv("NKCYCLES_DUMP_USD")) {
-    std::ofstream(dump_path) << usd_text;
-  }
-
-  const SdfLayerRefPtr layer = SdfLayer::CreateAnonymous(".usda");
-  if (!layer->ImportFromString(usd_text)) {
-    return "Failed to read the input scene";
-  }
-  const UsdStageRefPtr stage = UsdStage::Open(layer);
-  if (!stage) {
-    return "Failed to open the input scene";
-  }
-  /* Nuke works in meters and does not author the unit, USD would default to centimeters. */
-  if (!stage->HasAuthoredMetadata(UsdGeomTokens->metersPerUnit)) {
-    UsdGeomSetStageMetersPerUnit(stage, 1.0);
-  }
-  const double meters_per_unit = UsdGeomGetStageMetersPerUnit(stage);
-  for (const AttributeValue &value : options.attributes) {
-    set_attribute(stage, value);
-  }
-
-  /* The combined pass first, then the requested ones. */
-  std::vector<PassRequest> passes = {{"combined", "combined", 4}};
-  passes.insert(passes.end(), options.passes.begin(), options.passes.end());
-
-  const thread_scoped_lock lock(render_mutex);
-
-  HdRenderSettingsMap settings;
-  settings[HD_CYCLES_NS::HdCyclesRenderSettingsTokens->device] = VtValue(options.device);
-  SessionParams session_params = HD_CYCLES_NS::GetSessionParams(settings);
-  session_params.background = true;
-  session_params.samples = options.samples;
-  /* Big images are rendered in tiles written to disk, then read back as one image. */
-  session_params.temp_dir = std::filesystem::temp_directory_path().string();
-
-  /* shortcut: a new session (device, kernels, scene) per render, keep one per node for faster
-   * re-renders. */
-  const unique_ptr<Session> session = make_unique<Session>(session_params, SceneParams());
-  session->set_output_driver(make_unique<BufferOutputDriver>(passes, result));
-  session->progress.set_update_callback([&] {
-    if (options.aborted && options.aborted()) {
-      session->progress.set_cancel("Cancelled");
-    }
-  });
-  std::vector<string> tile_files;
-  session->full_buffer_written_cb = [&](string_view filename) {
-    tile_files.emplace_back(filename);
-  };
-
-  /* Image size first, the camera window is conformed to it when the scene is read. */
-  Scene *scene = session->scene.get();
-  scene->camera->set_full_width(options.width);
-  scene->camera->set_full_height(options.height);
-
-  /* Nuke fits the horizontal aperture to the image width. */
-  HD_CYCLES_NS::HdCyclesFileReader::read(session.get(),
-                                         stage,
-                                         UsdTimeCode(options.frame),
-                                         options.camera.empty() ? SdfPath() :
-                                                                  SdfPath(options.camera),
-                                         true,
-                                         CameraUtilMatchHorizontally);
-  scene->integrator->set_use_denoise(options.denoise);
-
-  /* Passes. Cryptomatte ones are written for every rank of the enabled types, in a fixed
-   * order, so they are created from the type mask and depth. */
   const NodeEnum *pass_types = Pass::get_type_enum();
   int cryptomatte_types = CRYPT_NONE;
   int cryptomatte_depth = 0;
@@ -280,6 +232,111 @@ std::string render(const std::string &usd_text, const RenderOptions &options, Re
       pass->set_name(ustring(string_printf("%s%02d", layer, index)));
     }
   }
+  return "";
+}
+
+}  // namespace
+
+void init(const std::string &root_path)
+{
+  path_init(root_path);
+}
+
+std::string render(const std::string &usd_text, const RenderOptions &options, RenderResult &result)
+{
+  result = RenderResult();
+
+  /* Write the scene as received from Nuke, for bug reports. */
+  if (const char *dump_path = getenv("NKCYCLES_DUMP_USD")) {
+    std::ofstream(dump_path) << usd_text;
+  }
+
+  /* The combined pass first, then the requested ones. */
+  std::vector<PassRequest> passes = {{"combined", "combined", 4}};
+  passes.insert(passes.end(), options.passes.begin(), options.passes.end());
+
+  const thread_scoped_lock lock(render_mutex);
+
+  HdRenderSettingsMap settings;
+  settings[HD_CYCLES_NS::HdCyclesRenderSettingsTokens->device] = VtValue(options.device);
+  SessionParams session_params = HD_CYCLES_NS::GetSessionParams(settings);
+  session_params.background = true;
+  session_params.samples = options.samples;
+  /* Big images are rendered in tiles written to disk, then read back as one image. */
+  session_params.temp_dir = std::filesystem::temp_directory_path().string();
+
+  if (cached && cached->params.modified(session_params)) {
+    delete cached;
+    cached = nullptr;
+  }
+  if (!cached) {
+    cached = new CachedSession();
+    cached->params = session_params;
+    cached->session = make_unique<Session>(session_params, SceneParams());
+    cached->layer = SdfLayer::CreateAnonymous(".usda");
+    cached->stage = UsdStage::Open(cached->layer);
+  }
+  Session *session = cached->session.get();
+  Scene *scene = session->scene.get();
+  const UsdStageRefPtr stage = cached->stage;
+
+  /* The new scene replaces the layer content with fine grained edits, so the reader syncs only
+   * the changed prims. */
+  if (!stage || !cached->layer->ImportFromString(usd_text)) {
+    delete cached;
+    cached = nullptr;
+    return "Failed to read the input scene";
+  }
+  /* Nuke works in meters and does not author the unit, USD would default to centimeters. */
+  if (!stage->HasAuthoredMetadata(UsdGeomTokens->metersPerUnit)) {
+    UsdGeomSetStageMetersPerUnit(stage, 1.0);
+  }
+  const double meters_per_unit = UsdGeomGetStageMetersPerUnit(stage);
+  for (const AttributeValue &value : options.attributes) {
+    set_attribute(stage, value);
+  }
+
+  if (!cached->reader || cached->meters_per_unit != meters_per_unit) {
+    cached->reader.reset();
+    cached->reader = make_unique<HD_CYCLES_NS::HdCyclesFileReader>(
+        session, stage, meters_per_unit);
+    cached->meters_per_unit = meters_per_unit;
+  }
+
+  /* Image size first, the camera window is conformed to it when the scene is synced. */
+  scene->camera->set_full_width(options.width);
+  scene->camera->set_full_height(options.height);
+
+  /* Nuke fits the horizontal aperture to the image width. */
+  if (!cached->reader->sync(UsdTimeCode(options.frame),
+                            options.camera.empty() ? SdfPath() : SdfPath(options.camera),
+                            true,
+                            CameraUtilMatchHorizontally))
+  {
+    return options.camera.empty() ? "No camera in the scene" : "No camera at " + options.camera;
+  }
+  scene->integrator->set_use_denoise(options.denoise);
+
+  if (!same_passes(passes, cached->passes)) {
+    const std::string message = create_passes(scene, passes);
+    cached->passes = message.empty() ? passes : std::vector<PassRequest>();
+    if (!message.empty()) {
+      return message;
+    }
+  }
+  const int cryptomatte_types = scene->film->get_cryptomatte_passes();
+
+  session->progress.reset();
+  session->set_output_driver(make_unique<BufferOutputDriver>(passes, result));
+  session->progress.set_update_callback([&] {
+    if (options.aborted && options.aborted()) {
+      session->progress.set_cancel("Cancelled");
+    }
+  });
+  std::vector<string> tile_files;
+  session->full_buffer_written_cb = [&](string_view filename) {
+    tile_files.emplace_back(filename);
+  };
 
   BufferParams buffer_params;
   buffer_params.width = buffer_params.full_width = options.width;
@@ -296,13 +353,23 @@ std::string render(const std::string &usd_text, const RenderOptions &options, Re
     path_remove(filename);
   }
 
+  session->set_output_driver(nullptr);
+  session->progress.set_update_callback(nullptr);
+  session->full_buffer_written_cb = nullptr;
+
   if (session->progress.get_cancel()) {
     result = RenderResult();
     return session->progress.get_cancel_message();
   }
-  if (session->progress.get_error()) {
+  if (session->progress.get_error() || session->device->have_error()) {
+    /* Start from a new session next time, device errors are not cleared. */
+    const std::string message = session->progress.get_error() ?
+                                    session->progress.get_error_message() :
+                                    session->device->error_message();
+    delete cached;
+    cached = nullptr;
     result = RenderResult();
-    return session->progress.get_error_message();
+    return message;
   }
   if (result.passes["combined"].size() != size_t(options.width) * options.height * 4) {
     result = RenderResult();
