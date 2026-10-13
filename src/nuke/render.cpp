@@ -197,7 +197,7 @@ void set_nuke_images(Scene *scene,
         continue;
       }
       const auto image = by_path.find(without_scheme(filename.string()));
-      if (image != by_path.end()) {
+      if (image != by_path.end() && image->second.second) {
         *handle = scene->image_manager->add_image(
             make_unique<NukeImageLoader>(image->second.first, image->second.second), params);
       }

@@ -628,10 +628,14 @@ class CyclesRender : public PlanarIop {
     std::map<std::string, std::shared_ptr<const nkcycles::Image>> images;
     for (const auto &[path, texture] : prepared->textures) {
       const auto image = _images.find(path);
-      images[path] = image != _images.end() ? image->second : fetch_image(texture);
-      if (aborted()) {
+      const std::shared_ptr<const nkcycles::Image> pixels = image != _images.end() ?
+                                                                image->second :
+                                                                fetch_image(texture);
+      /* The image is also aborted when another tree it is in was. */
+      if (!pixels || aborted()) {
         return {};
       }
+      images[path] = pixels;
     }
     _images = images;
     options.images = images;
