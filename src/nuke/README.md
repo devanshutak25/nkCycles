@@ -57,7 +57,7 @@ pwsh src/nuke/make_implibs.ps1 "C:/Program Files/Nuke15.0v1" implibs-nuke15
 ```
 
 Nuke 15 uses TBB 2020, so the legacy precompiled libraries are needed in
-`lib/legacy/windows_x64` (`git submodule update --init lib/legacy/windows_x64`).
+`lib/legacy/windows_x64`: get them with `make.bat update_legacy`.
 
 Configure with:
 
