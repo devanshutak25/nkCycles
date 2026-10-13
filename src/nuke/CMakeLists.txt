@@ -30,10 +30,11 @@ delayed_install(${CMAKE_CURRENT_SOURCE_DIR} "init.py;menu.py" ${CYCLES_INSTALL_P
 
 if(WIN32)
   # Bundled libraries the node imports, and the OpenImageDenoise device modules loaded at runtime.
+  # Embree, OSL and SYCL ones are only in the list when those are enabled.
   # TBB and the MSVC runtime are Nuke's.
   set(_nuke_runtime_libs ${PLATFORM_BUNDLED_LIBRARIES_RELEASE})
   list(FILTER _nuke_runtime_libs INCLUDE REGEX
-    "/(OpenImageIO|OpenImageIO_Util|OpenEXR|OpenEXRCore|Iex|IlmThread|[Ii]math|OpenColorIO_[0-9_]+|openvdb|epoxy-0|OpenImageDenoise|OpenImageDenoise_core|OpenImageDenoise_device_(cpu|cuda)|boost_thread-vc[0-9]+-mt-x64-[0-9_]+)[.]dll$")
+    "/(OpenImageIO|OpenImageIO_Util|OpenEXR|OpenEXRCore|Iex|IlmThread|[Ii]math|OpenColorIO_[0-9_]+|openvdb|epoxy-0|OpenImageDenoise|OpenImageDenoise_core|OpenImageDenoise_device_(cpu|cuda)|boost_thread-vc[0-9]+-mt-x64-[0-9_]+|embree4|osl(comp|exec|noise|query)|sycl[0-9]+|pi_[a-z0-9_]+|ur_[a-z0-9_]+)[.]dll$")
   install(FILES ${_nuke_runtime_libs} DESTINATION ${CYCLES_INSTALL_PATH})
   unset(_nuke_runtime_libs)
 
