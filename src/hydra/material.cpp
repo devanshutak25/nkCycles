@@ -312,16 +312,6 @@ class UsdToCycles {
       }};
   const UsdToCyclesMapping UsdPrimvarReader = {"attribute",
                                                {{TfToken("varname"), ustring("attribute")}}};
-  /* Surface Nuke gives to an image used as material, lit by the scene lights: diffuse only. */
-  const UsdToCyclesMapping NukeDefaultSurface = {
-      "principled_bsdf",
-      {
-          {TfToken("tex_color"), ustring("base_color")},
-          {TfToken("tex_opacity"), ustring("alpha")},
-      },
-      {
-          {ustring("specular_ior_level"), VtValue(0.0f)},
-      }};
 
  public:
   const UsdToCyclesMapping *findUsd(const TfToken &usdNodeType)
@@ -331,9 +321,6 @@ class UsdToCycles {
     }
     if (usdNodeType == CyclesMaterialTokens->UsdUVTexture) {
       return &UsdUVTexture;
-    }
-    if (usdNodeType == CyclesMaterialTokens->NukeDefaultSurface) {
-      return &NukeDefaultSurface;
     }
     if (usdNodeType == CyclesMaterialTokens->UsdPrimvarReader_float ||
         usdNodeType == CyclesMaterialTokens->UsdPrimvarReader_float2 ||
@@ -695,6 +682,182 @@ static ShaderOutput *BuildNukeProjection(ShaderGraph *graph,
   return uv->output("Vector");
 }
 
+/* Nuke's surfaces and layer nodes, made of several Cycles nodes. Returns false for other nodes.
+ * Their parameters are read here, the inputs connected later go to nodeDesc.inputs. */
+bool HdCyclesMaterial::BuildNukeNode(ShaderGraph *graph,
+                                     const TfToken &nodeType,
+                                     HdMaterialNodeSchema nodeSchema,
+                                     NodeDesc &nodeDesc)
+{
+  auto color = [](const GfVec3f &value) { return make_float3(value[0], value[1], value[2]); };
+  /* An input times a constant factor, with the parameter value when not connected. */
+  auto colorInput = [&](const char *name, const GfVec3f &fallback, const GfVec3f &factor) {
+    VectorMathNode *node = graph->create_node<VectorMathNode>();
+    node->set_math_type(NODE_VECTOR_MATH_MULTIPLY);
+    node->set_vector1(color(GetNodeParameter(nodeSchema, name, fallback)));
+    node->set_vector2(color(factor));
+    nodeDesc.inputs[TfToken(name)] = node->input("Vector1");
+    return node->output("Vector");
+  };
+  auto floatInput = [&](const char *name, const float fallback, const float factor) {
+    MathNode *node = graph->create_node<MathNode>();
+    node->set_math_type(NODE_MATH_MULTIPLY);
+    node->set_value1(GetNodeParameter(nodeSchema, name, fallback));
+    node->set_value2(factor);
+    nodeDesc.inputs[TfToken(name)] = node->input("Value1");
+    return node->output("Value");
+  };
+  auto setOutputs = [&](ShaderOutput *rgb, ShaderOutput *alpha) {
+    for (const char *name : {"rgb", "rgba", "result", "r", "g", "b"}) {
+      nodeDesc.outputs[TfToken(name)] = rgb;
+    }
+    for (const char *name : {"a", "opacity"}) {
+      nodeDesc.outputs[TfToken(name)] = alpha;
+    }
+  };
+  /* A principled BSDF, with a mapping so the material output takes its BSDF. */
+  auto surface = [&]() {
+    PrincipledBsdfNode *bsdf = graph->create_node<PrincipledBsdfNode>();
+    nodeDesc.node = bsdf;
+    nodeDesc.mapping = sUsdToCyles->findUsd(CyclesMaterialTokens->UsdPreviewSurface);
+    return bsdf;
+  };
+
+  if (nodeType == CyclesMaterialTokens->NukeDefaultSurface) {
+    /* Nuke's surface of images and layers: lit diffuse only. BlendSurface scales its opacity.
+     * shortcut: blend_op (how BlendSurface adds to what is behind) is not supported. */
+    PrincipledBsdfNode *bsdf = surface();
+    bsdf->set_specular_ior_level(0.0f);
+    nodeDesc.inputs[TfToken("tex_color")] = bsdf->input("Base Color");
+    graph->connect(
+        floatInput("tex_opacity", 1.0f, GetNodeParameter(nodeSchema, "opacity_factor", 1.0f)),
+        bsdf->input("Alpha"));
+    return true;
+  }
+  if (nodeType == "BasicSurface") {
+    /* Nuke's Phong surface: emission + diffuse + specular with a gain for each. */
+    PrincipledBsdfNode *bsdf = surface();
+    graph->connect(colorInput("diffuse_color",
+                              GfVec3f(1.0f),
+                              GetNodeParameter(nodeSchema, "diffuse_gain", GfVec3f(0.18f))),
+                   bsdf->input("Base Color"));
+    graph->connect(colorInput("emission_color",
+                              GfVec3f(1.0f),
+                              GetNodeParameter(nodeSchema, "emission_gain", GfVec3f(0.0f))),
+                   bsdf->input("Emission Color"));
+    bsdf->set_emission_strength(1.0f);
+    graph->connect(colorInput("specular_color", GfVec3f(1.0f), GfVec3f(1.0f)),
+                   bsdf->input("Specular Tint"));
+    /* Nuke's default specular gain 0.8 as the default specular level. */
+    const GfVec3f specularGain = GetNodeParameter(nodeSchema, "specular_gain", GfVec3f(0.8f));
+    bsdf->set_specular_ior_level(0.5f * (specularGain[0] + specularGain[1] + specularGain[2]) /
+                                 (3.0f * 0.8f));
+    /* Nuke 17 has a roughness, Nuke 15 a Phong shininess: n -> GGX roughness (2 / (n + 2))^1/4.
+     * shortcut: the shininess and roughness maps are not supported. */
+    const float shininess = 0.5f * (GetNodeParameter(nodeSchema, "min_shininess", 10.0f) +
+                                    GetNodeParameter(nodeSchema, "max_shininess", 10.0f));
+    bsdf->set_roughness(GetNodeParameter(
+        nodeSchema, "roughness", powf(2.0f / (std::max(shininess, 0.0f) + 2.0f), 0.25f)));
+    graph->connect(
+        floatInput("opacity_map", 1.0f, GetNodeParameter(nodeSchema, "opacity_factor", 1.0f)),
+        bsdf->input("Alpha"));
+    return true;
+  }
+  if (nodeType == "ConstantTexture" || nodeType == "FillShader") {
+    /* A constant color (FillShader's has an alpha). */
+    GfVec4f value(0.0f, 0.0f, 0.0f, 1.0f);
+    if (nodeType == "FillShader") {
+      value = GetNodeParameter(nodeSchema, "const_color", value);
+    }
+    else {
+      const GfVec3f rgb = GetNodeParameter(nodeSchema, "const_color", GfVec3f(0.0f));
+      value = GfVec4f(rgb[0], rgb[1], rgb[2], 1.0f);
+    }
+    ColorNode *rgb = graph->create_node<ColorNode>();
+    rgb->set_value(make_float3(value[0], value[1], value[2]));
+    MathNode *alpha = graph->create_node<MathNode>();
+    alpha->set_math_type(NODE_MATH_ADD);
+    alpha->set_value1(value[3]);
+    alpha->set_value2(0.0f);
+    nodeDesc.node = rgb;
+    setOutputs(rgb->output("Color"), alpha->output("Value"));
+    return true;
+  }
+  if (nodeType == "MergeLayer") {
+    /* Layer A on layer B. Operations: none, replace, over, stencil, mask, plus, max, min. */
+    enum { NONE, REPLACE, OVER, STENCIL, MASK, PLUS, MAX, MIN };
+    const int operation = GetNodeParameter(nodeSchema, "operation", int(OVER));
+    ShaderOutput *a = colorInput("Argb", GfVec3f(0.0f), GfVec3f(1.0f));
+    ShaderOutput *aAlpha = floatInput("Aopacity", 0.0f, 1.0f);
+    ShaderOutput *b = colorInput("Brgb", GfVec3f(0.0f), GfVec3f(1.0f));
+    ShaderOutput *bAlpha = floatInput("Bopacity", 0.0f, 1.0f);
+
+    auto vectorMath = [&](NodeVectorMathType type, ShaderOutput *v1, ShaderOutput *v2) {
+      VectorMathNode *node = graph->create_node<VectorMathNode>();
+      node->set_math_type(type);
+      graph->connect(v1, node->input("Vector1"));
+      graph->connect(v2, node->input("Vector2"));
+      return node;
+    };
+    auto math = [&](NodeMathType type, ShaderOutput *v1, ShaderOutput *v2) {
+      MathNode *node = graph->create_node<MathNode>();
+      node->set_math_type(type);
+      graph->connect(v1, node->input("Value1"));
+      graph->connect(v2, node->input("Value2"));
+      return node;
+    };
+    MathNode *aInverse = graph->create_node<MathNode>();
+    aInverse->set_math_type(NODE_MATH_SUBTRACT);
+    aInverse->set_value1(1.0f);
+    graph->connect(aAlpha, aInverse->input("Value2"));
+
+    ShaderOutput *rgb = b;
+    ShaderOutput *alpha = bAlpha;
+    switch (operation) {
+      case NONE:
+        break;
+      case REPLACE:
+        rgb = a;
+        alpha = aAlpha;
+        break;
+      case STENCIL:
+      case MASK: {
+        ShaderOutput *factor = operation == MASK ? aAlpha : aInverse->output("Value");
+        rgb = vectorMath(NODE_VECTOR_MATH_MULTIPLY, b, factor)->output("Vector");
+        alpha = math(NODE_MATH_MULTIPLY, bAlpha, factor)->output("Value");
+        break;
+      }
+      case PLUS:
+        rgb = vectorMath(NODE_VECTOR_MATH_ADD, a, b)->output("Vector");
+        alpha = math(NODE_MATH_ADD, aAlpha, bAlpha)->output("Value");
+        break;
+      case MAX:
+      case MIN:
+        rgb = vectorMath(
+                  operation == MAX ? NODE_VECTOR_MATH_MAXIMUM : NODE_VECTOR_MATH_MINIMUM, a, b)
+                  ->output("Vector");
+        alpha = math(operation == MAX ? NODE_MATH_MAXIMUM : NODE_MATH_MINIMUM, aAlpha, bAlpha)
+                    ->output("Value");
+        break;
+      default: {
+        /* Over: A + B * (1 - A alpha). */
+        VectorMathNode *over = vectorMath(
+            NODE_VECTOR_MATH_MULTIPLY_ADD, b, aInverse->output("Value"));
+        graph->connect(a, over->input("Vector3"));
+        rgb = over->output("Vector");
+        MathNode *overAlpha = math(NODE_MATH_MULTIPLY_ADD, bAlpha, aInverse->output("Value"));
+        graph->connect(aAlpha, overAlpha->input("Value3"));
+        alpha = overAlpha->output("Value");
+        break;
+      }
+    }
+    nodeDesc.node = rgb->parent;
+    setOutputs(rgb, alpha);
+    return true;
+  }
+  return false;
+}
+
 void HdCyclesMaterial::UpdateParameters(NodeDesc &nodeDesc,
                                         HdMaterialNodeParameterContainerSchema params,
                                         const SdfPath &nodePath)
@@ -794,7 +957,9 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
                                       dstSocketName.GetString();
 
     /* Find the input to connect to on the passed in node. */
-    ShaderInput *input = FindInput(nodeDesc.node, inputName);
+    const auto inputIt = nodeDesc.inputs.find(dstSocketName);
+    ShaderInput *input = inputIt != nodeDesc.inputs.end() ? inputIt->second :
+                                                            FindInput(nodeDesc.node, inputName);
 
     if (!input) {
       TF_WARN("Ignoring connection on '%s.%s', input '%s' was not found",
@@ -852,7 +1017,10 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
                                        outputMapping->parameterName(upstreamOutputName, input) :
                                        upstreamOutputName.GetString();
 
-    ShaderOutput *output = FindOutput(srcNodeIt->second.node, outputName);
+    const auto outputIt = srcNodeIt->second.outputs.find(upstreamOutputName);
+    ShaderOutput *output = outputIt != srcNodeIt->second.outputs.end() ?
+                               outputIt->second :
+                               FindOutput(srcNodeIt->second.node, outputName);
 
     if (!output) {
       TF_WARN("Ignoring connection from '%s.%s' to '%s.%s', output '%s' was not found",
@@ -990,6 +1158,11 @@ unique_ptr<ShaderGraph> HdCyclesMaterial::BuildShaderGraph(HdMaterialNetworkSche
           projections.push_back(nodeName);
         }
         notConnected.insert(nodePath);
+        continue;
+      }
+
+      if (BuildNukeNode(graph.get(), nodeTypeIdToken, nodeSchema, nodeDesc)) {
+        _nodes.emplace(nodePath, nodeDesc);
         continue;
       }
 

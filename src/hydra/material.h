@@ -39,7 +39,17 @@ class HdCyclesMaterial final : public PXR_NS::HdMaterial {
   struct NodeDesc {
     CCL_NS::ShaderNode *node;
     const class UsdToCyclesMapping *mapping;
+    /* Of nodes made of several Cycles nodes: their inputs and outputs by USD name. */
+    std::unordered_map<PXR_NS::TfToken, CCL_NS::ShaderInput *, PXR_NS::TfToken::HashFunctor>
+        inputs;
+    std::unordered_map<PXR_NS::TfToken, CCL_NS::ShaderOutput *, PXR_NS::TfToken::HashFunctor>
+        outputs;
   };
+
+  bool BuildNukeNode(CCL_NS::ShaderGraph *graph,
+                     const PXR_NS::TfToken &nodeType,
+                     PXR_NS::HdMaterialNodeSchema nodeSchema,
+                     NodeDesc &nodeDesc);
 
   void UpdateParameters(NodeDesc &nodeDesc,
                         PXR_NS::HdMaterialNodeParameterContainerSchema params,
