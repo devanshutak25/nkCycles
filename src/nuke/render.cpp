@@ -38,9 +38,10 @@
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdGeom/tokens.h>
 
+#include <OpenImageIO/filesystem.h>
+
 #include <cstdlib>
 #include <cstring>
-#include <filesystem>
 #include <set>
 
 namespace nkcycles {
@@ -270,6 +271,7 @@ void set_attribute(const UsdStageRefPtr &stage, const AttributeValue &value)
  * and keeps the device, kernels and unchanged geometry. */
 struct CachedSession {
   SessionParams params;
+  bool denoise = false;
   unique_ptr<Session> session;
   SdfLayerRefPtr layer;
   UsdStageRefPtr stage;
@@ -357,8 +359,8 @@ std::string render(const std::string &usd_text, const RenderOptions &options, Re
   SessionParams session_params = HD_CYCLES_NS::GetSessionParams(settings);
   session_params.background = true;
   session_params.samples = options.samples;
-  /* Big images are rendered in tiles written to disk, then read back as one image. */
-  session_params.temp_dir = std::filesystem::temp_directory_path().string();
+  /* Big images are rendered in tiles written to disk, then read back as one image. UTF-8 path. */
+  session_params.temp_dir = OIIO::Filesystem::temp_directory_path();
 
   if (cached && cached->params.modified(session_params)) {
     delete cached;
@@ -415,11 +417,15 @@ std::string render(const std::string &usd_text, const RenderOptions &options, Re
     return options.camera.empty() ? "No camera in the scene" : "No camera at " + options.camera;
   }
   scene->integrator->set_use_denoise(options.denoise);
+  /* The session only raises the samples, but their count sets up the sampling pattern. */
+  scene->integrator->set_aa_samples(options.samples);
   set_nuke_images(scene, options.images);
 
-  if (!same_passes(passes, cached->passes)) {
+  /* Without denoising the film makes the passes noisy, so denoising again needs new passes. */
+  if (!same_passes(passes, cached->passes) || cached->denoise != options.denoise) {
     const std::string message = create_passes(scene, passes);
     cached->passes = message.empty() ? passes : std::vector<PassRequest>();
+    cached->denoise = options.denoise;
     if (!message.empty()) {
       return message;
     }
@@ -450,7 +456,7 @@ std::string render(const std::string &usd_text, const RenderOptions &options, Re
     if (!session->progress.get_cancel()) {
       session->process_full_buffer_from_disk(filename);
     }
-    path_remove(filename);
+    OIIO::Filesystem::remove(filename);
   }
 
   session->set_output_driver(nullptr);
