@@ -33,9 +33,9 @@
 #  include <pxr/imaging/hd/retainedDataSource.h>
 #  include <pxr/imaging/hd/retainedSceneIndex.h>
 #  include <pxr/imaging/hdsi/extComputationPrimvarPruningSceneIndex.h>
-#  include <pxr/imaging/hdsi/legacyDisplayStyleOverrideSceneIndex.h>
+#  include <pxr/imaging/hdsi/implicitSurfaceSceneIndex.h>
 #  include <pxr/usdImaging/usdImaging/flattenedDataSourceProviders.h>
-#  include <pxr/usdImaging/usdImaging/materialBindingsResolvingSceneIndex.h>
+#  include <pxr/usdImaging/usdImaging/sceneIndices.h>
 #  include <pxr/usdImaging/usdImaging/stageSceneIndex.h>
 #else
 #  include <pxr/usdImaging/usdImaging/delegate.h>
@@ -141,15 +141,32 @@ HdCyclesFileReader::HdCyclesFileReader(Session *session,
   state.collection.SetRootPath(root_path);
 
 #ifdef WITH_HYDRA_SCENE_INDEX_TASKS
-  /* Set up scene index from USD stage for easy consumption.
-   * Do ext computation (e.g. skinning), flattening and resolve material bindings. */
-  state.stage_si = UsdImagingStageSceneIndex::New(nullptr);
-  state.stage_si->SetStage(stage);
+  /* Set up scene index from USD stage for easy consumption: the scene indices of USD imaging
+   * (instancing, material bindings, ...), then ext computation (e.g. skinning), implicit
+   * surfaces as meshes and flattening. */
+  UsdImagingCreateSceneIndicesInfo create_info;
+  create_info.stage = stage;
+  const UsdImagingSceneIndices scene_indices = UsdImagingCreateSceneIndices(create_info);
+  state.stage_si = scene_indices.stageSceneIndex;
 
-  HdSceneIndexBaseRefPtr filtered = state.stage_si;
+  HdSceneIndexBaseRefPtr filtered = scene_indices.finalSceneIndex;
   filtered = HdSiExtComputationPrimvarPruningSceneIndex::New(filtered);
+  /* Cycles has no implicit surfaces, turn USD Sphere, Cube, ... into meshes. */
+  const HdDataSourceBaseHandle to_mesh = HdRetainedTypedSampledDataSource<TfToken>::New(
+      HdsiImplicitSurfaceSceneIndexTokens->toMesh);
+  const TfToken implicit_types[] = {HdPrimTypeTokens->sphere,
+                                    HdPrimTypeTokens->cube,
+                                    HdPrimTypeTokens->cone,
+                                    HdPrimTypeTokens->cylinder,
+                                    HdPrimTypeTokens->capsule,
+                                    HdPrimTypeTokens->plane};
+  const HdDataSourceBaseHandle implicit_modes[] = {
+      to_mesh, to_mesh, to_mesh, to_mesh, to_mesh, to_mesh};
+  filtered = HdsiImplicitSurfaceSceneIndex::New(
+      filtered,
+      HdRetainedContainerDataSource::New(
+          std::size(implicit_types), implicit_types, implicit_modes));
   filtered = HdFlatteningSceneIndex::New(filtered, UsdImagingFlattenedDataSourceProviders());
-  filtered = UsdImagingMaterialBindingsResolvingSceneIndex::New(filtered, nullptr);
 
   /* Provide DummyHdTask as a task prim to the scene index. */
   const TfTokenVector render_tags = {HdRenderTagTokens->geometry, HdRenderTagTokens->render};
