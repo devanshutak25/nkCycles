@@ -159,6 +159,7 @@ TF_DEFINE_PRIVATE_TOKENS(CyclesMaterialTokens,
     (UsdPrimvarReader_int)
     (UsdTransform2d)
     (NukeDefaultSurface)
+    (normal)
     (a)
     (rgb)
     (r)
@@ -664,12 +665,14 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
                                      connSchema.GetUpstreamNodeOutputName()->GetTypedValue(0.0f) :
                                      TfToken();
 
-    /* Connect from the input of pass-through nodes. */
+    /* Connect from the input of pass-through nodes, leaving out cycles. */
+    size_t hops = 0;
     for (auto it = _passThrough.find(upstreamNodePath); it != _passThrough.end();
          it = _passThrough.find(upstreamNodePath))
     {
       std::tie(upstreamNodePath, upstreamOutputName) = it->second;
-      if (upstreamNodePath.IsEmpty()) {
+      if (upstreamNodePath.IsEmpty() || ++hops > _passThrough.size()) {
+        upstreamNodePath = SdfPath();
         break;
       }
     }
@@ -705,8 +708,14 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
       continue;
     }
 
+    const bool fromTexture = outputMapping &&
+                             srcNodeIt->second.node->type == ImageTextureNode::get_node_type();
+    const bool toNormal = nodeDesc.mapping &&
+                          nodeDesc.node->type == PrincipledBsdfNode::get_node_type() &&
+                          dstSocketName == CyclesMaterialTokens->normal;
+
     /* Scale and bias of an UsdUVTexture, after its color or alpha. */
-    if (outputMapping && srcNodeIt->second.node->type == ImageTextureNode::get_node_type()) {
+    if (fromTexture && !toNormal) {
       const TextureScaleBias &scaleBias = _textureScaleBias[upstreamNodePath];
       ShaderNode *math;
       if (output->name() == "Alpha") {
@@ -724,6 +733,36 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
         math = mathNode;
       }
       SetTextureScaleBias(math, scaleBias.scale, scaleBias.bias);
+
+      /* The r, g and b outputs are one channel of the color. */
+      if (upstreamOutputName == CyclesMaterialTokens->r ||
+          upstreamOutputName == CyclesMaterialTokens->g ||
+          upstreamOutputName == CyclesMaterialTokens->b)
+      {
+        SeparateXYZNode *separate = shaderGraph->create_node<SeparateXYZNode>();
+        shaderGraph->connect(output, separate->input("Vector"));
+        output = separate->output(upstreamOutputName == CyclesMaterialTokens->r ? "X" :
+                                  upstreamOutputName == CyclesMaterialTokens->g ? "Y" :
+                                                                                  "Z");
+      }
+    }
+
+    /* The UsdPreviewSurface normal is in tangent space, the BSDF takes a world space normal.
+     * The normal map node takes the color of a normal map texture, without the scale and bias
+     * that map it to -1..1 (Nuke leaves them at 1 and 0). */
+    if (toNormal) {
+      if (!fromTexture) {
+        VectorMathNode *color = shaderGraph->create_node<VectorMathNode>();
+        color->set_math_type(NODE_VECTOR_MATH_MULTIPLY_ADD);
+        color->set_vector2(make_float3(0.5f, 0.5f, 0.5f));
+        color->set_vector3(make_float3(0.5f, 0.5f, 0.5f));
+        shaderGraph->connect(output, color->input("Vector1"));
+        output = color->output("Vector");
+      }
+      NormalMapNode *normalMap = shaderGraph->create_node<NormalMapNode>();
+      normalMap->set_space(NODE_NORMAL_MAP_TANGENT);
+      shaderGraph->connect(output, normalMap->input("Color"));
+      output = normalMap->output("Normal");
     }
 
     shaderGraph->connect(output, input);
