@@ -14,6 +14,14 @@
 #include <DDImage/MaterialOpI.h>
 #include <DDImage/MetaData.h>
 #include <DDImage/PlanarIop.h>
+#include <DDImage/ddImageVersionNumbers.h>
+#if kDDImageVersionInteger >= 161000
+#  include <DDImage/CameraSceneOp.h>
+#  include <DDImage/GeometryProviderI.h>
+#  include <DDImage/LightSceneOp.h>
+#elif kDDImageVersionInteger >= 160000
+#  error "Nuke 16.0 is not supported yet: the stage and prim path functions differ."
+#endif
 #include <usg/geom/Stage.h>
 
 #include <algorithm>
@@ -42,7 +50,7 @@ namespace {
 const char *const kClass = "CyclesRender";
 const char *const kHelp =
     "Renders the input 3D scene (USD-based 3D system) with Cycles.\n\n"
-    "The camera knob takes the path of a camera prim, for example /Camera1. "
+    "The camera knob takes the path of a camera prim, as shown in the Scene Graph. "
     "When empty, the first camera in the scene is used.";
 
 const char *const kDevices[] = {"AUTO", "OPTIX", "CUDA", "CPU", nullptr};
@@ -181,6 +189,24 @@ struct Prepared {
   MetaData::Bundle metadata;
 };
 
+/* Path of the USD light or camera prim of a Nuke light or camera, empty for other ops. */
+std::string light_or_camera_prim(Op *op)
+{
+#if kDDImageVersionInteger >= 161000
+  if (LightSceneOp *light = dynamic_cast<LightSceneOp *>(op)) {
+    return light->buildLightSchemaPrimPath().asString();
+  }
+  if (CameraSceneOp *camera = dynamic_cast<CameraSceneOp *>(op)) {
+    return camera->buildCameraSchemaPrimPath().asString();
+  }
+#else
+  if (AxisOp *axis = dynamic_cast<AxisOp *>(op)) {
+    return axis->primFullPath().asString();
+  }
+#endif
+  return std::string();
+}
+
 /* RGBA pixels of the format area of an image, repeating the edge pixels outside its bounding
  * box, with alpha 1 when the image has none. The image is validated and requested by the node. */
 std::shared_ptr<const nkcycles::Image> fetch_image(const Texture &texture)
@@ -260,7 +286,7 @@ class CyclesRender : public PlanarIop {
   {
     Format_knob(f, &_formats, "format");
     String_knob(f, &_camera, "camera", "camera");
-    Tooltip(f, "Camera prim path, for example /Camera1. Empty uses the first camera.");
+    Tooltip(f, "Camera prim path, as shown in the Scene Graph. Empty uses the first camera.");
     Int_knob(f, &_samples, "samples");
     SetRange(f, 1, 4096);
     Enumeration_knob(f, &_device, kDevices, "device");
@@ -472,8 +498,8 @@ class CyclesRender : public PlanarIop {
     if (!op || !visited.insert(op).second) {
       return;
     }
-    if (AxisOp *axis = dynamic_cast<AxisOp *>(op)) {
-      const std::string prim = axis->primFullPath().asString();
+    const std::string prim = light_or_camera_prim(op);
+    if (!prim.empty()) {
       if (dynamic_cast<LightOp *>(op)) {
         for (const KnobAttribute &knob : kLightKnobs) {
           add_knob_values(op, knob, prim, values);
@@ -529,7 +555,13 @@ class CyclesRender : public PlanarIop {
     prepared->outputs = outputs;
     usg::StageRef stage;
     if (geo) {
+#if kDDImageVersionInteger >= 161000
+      /* The sample times are frames, like the time codes of the stage. */
+      GeometryProviderI::BuildStage(
+          stage, usg::ArgSet(), OpGraphLocation(geo), fdk::TimeValueSet{outputContext().frame()});
+#else
       GeomOp::buildStage(stage, usg::ArgSet(), geo);
+#endif
     }
     if (!geo) {
       prepared->error = "No input scene";
@@ -675,11 +707,11 @@ class CyclesRender : public PlanarIop {
   std::map<std::string, std::shared_ptr<const nkcycles::Image>> _images;
 };
 
-Iop *build(Node *node)
+Op *build(Node *node)
 {
   return new CyclesRender(node);
 }
 
 }  // namespace
 
-const Iop::Description CyclesRender::description(kClass, "3D/CyclesRender", build);
+const Op::Description CyclesRender::description(kClass, build);
