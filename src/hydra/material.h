@@ -50,7 +50,8 @@ class HdCyclesMaterial final : public PXR_NS::HdMaterial {
                          const PXR_NS::SdfPath &nodePath,
                          CCL_NS::ShaderGraph *shaderGraph);
 
-  unique_ptr<CCL_NS::ShaderGraph> BuildShaderGraph(PXR_NS::HdMaterialNetworkSchema network);
+  unique_ptr<CCL_NS::ShaderGraph> BuildShaderGraph(PXR_NS::HdMaterialNetworkSchema network,
+                                                   double metersPerUnit);
 
   CCL_NS::Shader *_shader = nullptr;
   std::unordered_map<PXR_NS::SdfPath, NodeDesc, PXR_NS::SdfPath::Hash> _nodes;
