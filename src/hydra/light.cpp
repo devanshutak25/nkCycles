@@ -368,9 +368,18 @@ void HdCyclesLight::Finalize(HdRenderParam *renderParam)
   const bool keep_nodes = static_cast<const HdCyclesSession *>(renderParam)->keep_nodes;
 
   if (!keep_nodes) {
+    /* Cycles keeps deleted shaders, release the graph with its images. */
+    Shader *shader = _light->get_used_shaders().empty() ?
+                         nullptr :
+                         static_cast<Shader *>(_light->get_used_shaders()[0]);
     /* Delete the object before the light, since the object references the light. */
     lock.scene->delete_node(_object);
     lock.scene->delete_node(_light);
+    if (shader) {
+      shader->set_graph(make_unique<ShaderGraph>());
+      shader->tag_update(lock.scene);
+      lock.scene->delete_node(shader);
+    }
   }
 
   _light = nullptr;

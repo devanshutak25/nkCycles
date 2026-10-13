@@ -1011,6 +1011,9 @@ void HdCyclesMaterial::Finalize(HdRenderParam *renderParam)
   _nodes.clear();
 
   if (!keep_nodes) {
+    /* Cycles keeps deleted shaders, release the graph with its images. */
+    _shader->set_graph(make_unique<ShaderGraph>());
+    _shader->tag_update(lock.scene);
     lock.scene->delete_node(_shader);
   }
   _shader = nullptr;
