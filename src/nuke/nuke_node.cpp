@@ -30,6 +30,7 @@
 #include <memory>
 #include <mutex>
 #include <set>
+#include <string_view>
 
 #ifdef _WIN32
 #  ifndef WIN32_LEAN_AND_MEAN
@@ -188,6 +189,48 @@ struct Prepared {
   std::map<std::string, Texture> textures;
   MetaData::Bundle metadata;
 };
+
+/* Nuke writes some arrays with a scalar type ("uniform int inputs:channels = [1, 2, 3, 4]" of
+ * FillShader, WireframeShader and MergeLayerShader), which USD cannot read back: give them the
+ * array type. */
+void fix_array_types(std::string &text)
+{
+  static const std::set<std::string_view> scalar_types = {"bool",
+                                                          "int",
+                                                          "uint",
+                                                          "int64",
+                                                          "uint64",
+                                                          "half",
+                                                          "float",
+                                                          "double",
+                                                          "token",
+                                                          "string",
+                                                          "asset"};
+  const std::string_view view(text);
+  std::string fixed;
+  size_t copied = 0;
+  for (size_t line = 0; line < view.size();) {
+    const size_t end = std::min(view.find('\n', line), view.size());
+    size_t type = view.find_first_not_of(" \t", line);
+    for (const std::string_view qualifier : {"uniform ", "custom "}) {
+      if (type < end && view.substr(type, qualifier.size()) == qualifier) {
+        type = view.find_first_not_of(' ', type + qualifier.size());
+      }
+    }
+    const size_t type_end = std::min(view.find(' ', type), end);
+    if (type < type_end && scalar_types.count(view.substr(type, type_end - type))) {
+      const size_t name_end = view.find_first_of(" =", type_end + 1);
+      if (name_end < end && view.substr(name_end, 4) == " = [") {
+        fixed.append(view.substr(copied, type_end - copied)).append("[]");
+        copied = type_end;
+      }
+    }
+    line = end + 1;
+  }
+  if (copied > 0) {
+    text = fixed.append(view.substr(copied));
+  }
+}
 
 /* Path of the USD light or camera prim of a Nuke light or camera, empty for other ops. */
 std::string light_or_camera_prim(Op *op)
@@ -594,6 +637,7 @@ class CyclesRender : public PlanarIop {
       prepared->error = "Failed to export the input scene";
     }
     else {
+      fix_array_types(prepared->usd_text);
       nkcycles::RenderOptions &options = prepared->options;
       options.width = format().width();
       options.height = format().height();
