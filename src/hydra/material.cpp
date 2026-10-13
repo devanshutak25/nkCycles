@@ -731,9 +731,14 @@ bool HdCyclesMaterial::BuildNukeNode(ShaderGraph *graph,
     return node->output("Value");
   };
   auto setOutputs = [&](ShaderOutput *rgb, ShaderOutput *alpha) {
-    for (const char *name : {"rgb", "rgba", "result", "r", "g", "b"}) {
+    for (const char *name : {"rgb", "rgba", "result"}) {
       nodeDesc.outputs[TfToken(name)] = rgb;
     }
+    SeparateXYZNode *channels = graph->create_node<SeparateXYZNode>();
+    graph->connect(rgb, channels->input("Vector"));
+    nodeDesc.outputs[TfToken("r")] = channels->output("X");
+    nodeDesc.outputs[TfToken("g")] = channels->output("Y");
+    nodeDesc.outputs[TfToken("b")] = channels->output("Z");
     for (const char *name : {"a", "opacity"}) {
       nodeDesc.outputs[TfToken(name)] = alpha;
     }
@@ -794,7 +799,7 @@ bool HdCyclesMaterial::BuildNukeNode(ShaderGraph *graph,
     }
     else {
       const GfVec3f rgb = GetNodeParameter(nodeSchema, "const_color", GfVec3f(0.0f));
-      value = GfVec4f(rgb[0], rgb[1], rgb[2], 1.0f);
+      value = GfVec4f(rgb[0], rgb[1], rgb[2], GetNodeParameter(nodeSchema, "const_opacity", 1.0f));
     }
     ColorNode *rgb = graph->create_node<ColorNode>();
     rgb->set_value(make_float3(value[0], value[1], value[2]));
@@ -881,13 +886,26 @@ bool HdCyclesMaterial::BuildNukeNode(ShaderGraph *graph,
   return false;
 }
 
+/* Whether an input of a UsdPreviewSurface is ignored: specularColor is only used in the
+ * specular workflow. */
+static bool IsUnusedPreviewSurfaceInput(HdMaterialNodeParameterContainerSchema params,
+                                        const TfToken &name)
+{
+  if (name != "specularColor") {
+    return false;
+  }
+  auto valueDs = params.Get(TfToken("useSpecularWorkflow")).GetValue();
+  const VtValue value = valueDs ? valueDs->GetValue(0.0f) : VtValue();
+  return !(value.CanCast<int>() && VtValue::Cast<int>(value).UncheckedGet<int>() == 1);
+}
+
 void HdCyclesMaterial::UpdateParameters(NodeDesc &nodeDesc,
                                         HdMaterialNodeParameterContainerSchema params,
                                         const SdfPath &nodePath)
 {
   for (const TfToken &paramName : params.GetNames()) {
     auto valueDs = params.Get(paramName).GetValue();
-    if (!valueDs) {
+    if (!valueDs || IsUnusedPreviewSurfaceInput(params, paramName)) {
       continue;
     }
     VtValue value = valueDs->GetValue(0.0f);
@@ -970,7 +988,9 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
     }
 
     /* The shader passed through an AOV Output node is resolved at the terminals. */
-    if (IsAovPassThrough(nodeDesc.node, dstSocketName)) {
+    if (IsAovPassThrough(nodeDesc.node, dstSocketName) ||
+        IsUnusedPreviewSurfaceInput(nodeSchema.GetParameters(), dstSocketName))
+    {
       continue;
     }
 
