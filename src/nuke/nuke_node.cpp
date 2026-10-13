@@ -355,11 +355,12 @@ class CyclesRender : public PlanarIop {
     Bool_knob(f, &_depth_of_field, "depth_of_field", "depth of field");
     Tooltip(f, "Focus at the focal distance of the camera, blurred by its f-stop.");
     Int_knob(f, &_shutter_steps, "shutter_steps", "motion blur steps");
+    SetFlags(f, Knob::EARLY_STORE);
     SetRange(f, 0, 16);
     Tooltip(f,
             "Motion blur over the shutter: 0 off, 1 a straight blur, more steps follow curved "
             "motion. The scene is read at the center of the shutter and evenly around it.");
-    _shutter.knobs(f);
+    _shutter.knobs(f, true);
 
     Divider(f, "outputs");
     Channel_knob(f, _depth_channel, 1, "depth_channel", "depth");
@@ -388,13 +389,59 @@ class CyclesRender : public PlanarIop {
     Tooltip(f, "Number of overlapping IDs per pixel, two per layer.");
   }
 
+  /* Motion blur: the number of intervals between the frames the scene is read at, over the
+   * shutter. Even, so the center is one of the frames, and 0 without motion blur. */
+  int shutter_intervals() const
+  {
+    if (_shutter_steps <= 0 || _shutter.getDuration() <= 0.0) {
+      return 0;
+    }
+#if kDDImageVersionInteger >= 161000
+    /* At most the 129 motion steps of Cycles. */
+    return std::min(_shutter_steps + _shutter_steps % 2, 128);
+#else
+    /* Nuke 15 writes no frames between the shutter open, center and close. */
+    return 2;
+#endif
+  }
+
+  /* The scene input once per frame over the shutter. */
+  int split_input(int input) const override
+  {
+    return input == 0 ? shutter_intervals() + 1 : 1;
+  }
+
+  const OutputContext &inputContext(int input, int offset, OutputContext &context) const override
+  {
+    context = outputContext();
+    const int intervals = shutter_intervals();
+    if (input == 0 && intervals > 0) {
+      context.setFrame(context.frame() + _shutter.calcOffset() +
+                       _shutter.getDuration() * offset / intervals);
+    }
+    return context;
+  }
+
+  const OutputContext *inputUIContext(int /*input*/, OutputContext & /*context*/) const override
+  {
+    return &outputContext();
+  }
+
+  /* The scene input at the frame the render is centered on. */
+  GeomOp *scene_input() const
+  {
+    return op_cast<GeomOp *>(Op::input(0, split_input(0) / 2));
+  }
+
   /* The scene can animate without animated knobs, like an imported USD file. */
   void append(Hash &hash) override
   {
     hash.append(outputContext().frame());
-    /* An upstream FrameHold or TimeOffset changes the frame the scene is read at. */
-    if (Op *scene = Op::input(0)) {
-      hash.append(scene->outputContext().frame());
+    /* An upstream FrameHold or TimeOffset changes the frames the scene is read at. */
+    for (int offset = 0; offset < split_input(0); offset++) {
+      if (Op *scene = Op::input(0, offset)) {
+        hash.append(scene->outputContext().frame());
+      }
     }
     enableVaryingOutputHash();
   }
@@ -459,12 +506,15 @@ class CyclesRender : public PlanarIop {
     }
     info_.channels(channels);
 
-    GeomOp *geo = op_cast<GeomOp *>(Op::input(0));
-    if (geo) {
-      geo->validate(for_real);
+    std::vector<GeomOp *> scenes;
+    for (int offset = 0; offset < split_input(0); offset++) {
+      if (GeomOp *scene = op_cast<GeomOp *>(Op::input(0, offset))) {
+        scene->validate(for_real);
+        scenes.push_back(scene);
+      }
     }
     if (for_real) {
-      prepare(geo, passes, outputs);
+      prepare(scene_input(), scenes, passes, outputs);
     }
   }
 
@@ -647,6 +697,7 @@ class CyclesRender : public PlanarIop {
 
   /* Build the scene and gather what the render needs from Nuke, once per hash. */
   void prepare(GeomOp *geo,
+               const std::vector<GeomOp *> &shutter_geos,
                const std::vector<nkcycles::PassRequest> &passes,
                const std::vector<PassOutput> &outputs)
   {
@@ -662,33 +713,17 @@ class CyclesRender : public PlanarIop {
     prepared->outputs = outputs;
     /* The input is made at the frame that FrameHold or TimeOffset nodes before us map to. */
     double frame = geo ? geo->outputContext().frame() : outputContext().frame();
-    /* Motion blur: the input at frames evenly spread over the shutter, an odd count so the
-     * center is one of them. FrameHold and TimeOffset nodes map these frames too. */
-    std::vector<GeomOp *> shutter_geos;
+    /* Motion blur: the input at frames evenly spread over the shutter, as FrameHold and
+     * TimeOffset nodes map them (which may reverse them). */
     std::vector<double> shutter_frames;
-    if (geo && _shutter_steps > 0 && _shutter.getDuration() > 0.0) {
-      const int steps = _shutter_steps + _shutter_steps % 2;
-      for (int i = 0; i <= steps; i++) {
-        OutputContext context = outputContext();
-        context.setFrame(context.frame() + _shutter.calcOffset() +
-                         _shutter.getDuration() * i / steps);
-        GeomOp *op = op_cast<GeomOp *>(node_input(0, Op::EXECUTABLE_INPUT, &context));
-        if (!op) {
-          shutter_geos.clear();
-          shutter_frames.clear();
-          break;
-        }
-        op->validate(true);
-        shutter_geos.push_back(op);
-        /* Read now: Nuke may give the same op for the next frame. */
+    if (shutter_geos.size() > 1) {
+      for (GeomOp *op : shutter_geos) {
         shutter_frames.push_back(op->outputContext().frame());
       }
+      std::sort(shutter_frames.begin(), shutter_frames.end());
     }
-    double shutter = 0.0;
-    if (!shutter_frames.empty()) {
-      frame = shutter_frames[shutter_frames.size() / 2];
-      shutter = shutter_frames.back() - shutter_frames.front();
-    }
+    const double shutter = shutter_frames.empty() ? 0.0 :
+                                                    shutter_frames.back() - shutter_frames.front();
     usg::StageRef stage;
     if (geo) {
       /* The sample times are frames, like the time codes of the stage. */
@@ -697,12 +732,11 @@ class CyclesRender : public PlanarIop {
 #if kDDImageVersionInteger >= 161000
       GeometryProviderI::BuildStage(stage, usg::ArgSet(), OpGraphLocation(geo), times);
 #else
-      if (shutter_geos.empty()) {
+      if (shutter == 0.0) {
         GeomOp::buildStage(stage, usg::ArgSet(), geo);
       }
       else {
-        /* shortcut: the engines sample the shutter open and close only (a straight blur),
-         * also when asked for the frames between. */
+        /* The engines write the shutter open, center and close. */
         GeomOp::buildStage(
             stage, usg::ArgSet(), GeomOpSet(shutter_geos.begin(), shutter_geos.end()), &times);
       }
