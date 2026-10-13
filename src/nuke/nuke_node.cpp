@@ -11,12 +11,15 @@
 #include <DDImage/GeomOp.h>
 #include <DDImage/Knobs.h>
 #include <DDImage/LightOp.h>
+#include <DDImage/MaterialOpI.h>
 #include <DDImage/MetaData.h>
 #include <DDImage/PlanarIop.h>
 #include <usg/geom/Stage.h>
 
 #include <algorithm>
 #include <cstdio>
+#include <map>
+#include <memory>
 #include <mutex>
 #include <set>
 
@@ -147,6 +150,37 @@ void add_knob_values(Op *op,
     value.value.push_back(knob->get_value_at(op->outputContext(), i));
   }
   values.push_back(value);
+}
+
+/* RGBA pixels of the format area of an image, with alpha 1 when the image has none. */
+std::shared_ptr<const nkcycles::Image> fetch_image(Iop *iop)
+{
+  iop->validate(true);
+  const Format &format = iop->format();
+  const Box box(format.x(), format.y(), format.r(), format.t());
+  if (box.w() <= 0 || box.h() <= 0) {
+    return nullptr;
+  }
+  iop->request(box, Mask_RGBA, 1);
+  ImagePlane plane(box, false, Mask_RGBA, 4);
+  iop->fetchPlane(plane);
+  if (iop->aborted()) {
+    return nullptr;
+  }
+  const bool has_alpha = iop->channels().contains(Chan_Alpha);
+  auto image = std::make_shared<nkcycles::Image>();
+  image->width = box.w();
+  image->height = box.h();
+  image->pixels.resize(size_t(box.w()) * box.h() * 4);
+  float *pixel = image->pixels.data();
+  for (int y = box.y(); y < box.t(); y++) {
+    for (int x = box.x(); x < box.r(); x++) {
+      for (int c = 0; c < 4; c++) {
+        *pixel++ = (c == 3 && !has_alpha) ? 1.0f : plane.at(x, y, Channel(Chan_Red + c));
+      }
+    }
+  }
+  return image;
 }
 
 class CyclesRender : public PlanarIop {
@@ -398,6 +432,17 @@ class CyclesRender : public PlanarIop {
         for (const KnobAttribute &knob : kLightKnobs) {
           add_knob_values(op, knob, prim, values);
         }
+        /* The image of an EnvironmentLight. */
+        for (int i = 0; i < op->inputs(); i++) {
+          if (Iop *image = op->input(i) ? op->input(i)->iop() : nullptr) {
+            const std::string path = MaterialOpI::buildAssetPath(image);
+            values.push_back({prim,
+                              "inputs:texture:file",
+                              {},
+                              path.rfind("nkop:", 0) == 0 ? path : "nkop:" + path});
+            break;
+          }
+        }
       }
       else if (dynamic_cast<CameraOp *>(op)) {
         Knob *near_knob = op->knob("near"), *far_knob = op->knob("far");
@@ -415,6 +460,45 @@ class CyclesRender : public PlanarIop {
     for (int i = 0; i < op->inputs(); i++) {
       collect_attributes(op->input(i), visited, values);
     }
+  }
+
+  /* Images of Nuke nodes the scene uses as textures, by asset path. The path has the hash of the
+   * node, so images of the last render are reused. */
+  std::map<std::string, std::shared_ptr<const nkcycles::Image>> fetch_images(
+      const std::string &usd_text, const std::vector<nkcycles::AttributeValue> &attributes)
+  {
+    std::set<std::string> paths;
+    for (size_t start = usd_text.find("@nkop:"); start != std::string::npos;
+         start = usd_text.find("@nkop:", start + 1))
+    {
+      const size_t end = usd_text.find('@', start + 1);
+      if (end == std::string::npos) {
+        break;
+      }
+      paths.insert(usd_text.substr(start + 1, end - start - 1));
+    }
+    for (const nkcycles::AttributeValue &value : attributes) {
+      if (!value.asset.empty()) {
+        paths.insert(value.asset);
+      }
+    }
+
+    std::map<std::string, std::shared_ptr<const nkcycles::Image>> images;
+    for (const std::string &path : paths) {
+      const auto image = _images.find(path);
+      if (image != _images.end()) {
+        images[path] = image->second;
+        continue;
+      }
+      Op *op = MaterialOpI::retrieveOpFromAssetPath(path);
+      if (Iop *iop = op ? op->iop() : nullptr) {
+        if (std::shared_ptr<const nkcycles::Image> pixels = fetch_image(iop)) {
+          images[path] = pixels;
+        }
+      }
+    }
+    _images = images;
+    return images;
   }
 
   /* Render all passes, once per hash. Returns false when there is no image. */
@@ -461,6 +545,10 @@ class CyclesRender : public PlanarIop {
     options.passes = _passes;
     std::set<Op *> visited;
     collect_attributes(geo, visited, options.attributes);
+    options.images = fetch_images(usd_text, options.attributes);
+    if (aborted()) {
+      return false;
+    }
     options.aborted = [this] { return aborted(); };
 
     _error = nkcycles::render(usd_text, options, _result);
@@ -497,6 +585,7 @@ class CyclesRender : public PlanarIop {
   nkcycles::RenderResult _result;
   std::string _error;
   MetaData::Bundle _metadata;
+  std::map<std::string, std::shared_ptr<const nkcycles::Image>> _images;
 };
 
 Iop *build(Node *node)

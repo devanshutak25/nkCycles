@@ -9,15 +9,20 @@
 
 #include "scene/camera.h"
 #include "scene/film.h"
+#include "scene/image.h"
+#include "scene/image_loader.h"
 #include "scene/integrator.h"
 #include "scene/object.h"
 #include "scene/pass.h"
 #include "scene/scene.h"
 #include "scene/shader.h"
+#include "scene/shader_graph.h"
+#include "scene/shader_nodes.h"
 #include "session/buffers.h"
 #include "session/output_driver.h"
 #include "session/session.h"
 
+#include "util/image_metadata.h"
 #include "util/murmurhash.h"
 #include "util/path.h"
 #include "util/string.h"
@@ -36,7 +41,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
-#include <fstream>
 #include <set>
 
 namespace nkcycles {
@@ -109,6 +113,96 @@ string cryptomatte_manifest(const std::set<string> &names)
   return manifest + "}";
 }
 
+/* Image of a Nuke node, fetched by the node. */
+class NukeImageLoader : public ImageLoader {
+ public:
+  NukeImageLoader(const string &path, std::shared_ptr<const Image> image)
+      : path_(path), image_(std::move(image))
+  {
+  }
+
+  bool load_metadata(ImageMetaData &metadata,
+                     const ImageLoaderParams & /*params*/,
+                     Progress & /*progress*/) override
+  {
+    metadata.width = image_->width;
+    metadata.height = image_->height;
+    metadata.channels = 4;
+    metadata.type = IMAGE_DATA_TYPE_FLOAT4;
+    return true;
+  }
+
+  bool load_pixels(const ImageMetaData &metadata, void *pixels) override
+  {
+    memcpy(pixels, image_->pixels.data(), image_->pixels.size() * sizeof(float));
+    metadata.conform_pixels(pixels);
+    return true;
+  }
+
+  string name() const override
+  {
+    return path_;
+  }
+
+  bool equals(const ImageLoader &other) const override
+  {
+    const NukeImageLoader *loader = dynamic_cast<const NukeImageLoader *>(&other);
+    return loader && loader->path_ == path_;
+  }
+
+ private:
+  string path_;
+  std::shared_ptr<const Image> image_;
+};
+
+/* Give the image texture nodes that read a Nuke image ("nkop:" asset path) its pixels. Nodes of
+ * shaders that did not change keep the image they have. */
+void set_nuke_images(Scene *scene,
+                     const std::map<std::string, std::shared_ptr<const Image>> &images)
+{
+  if (images.empty()) {
+    return;
+  }
+  /* Nuke's asset resolver may remove the URI scheme. */
+  auto without_scheme = [](const string &path) {
+    return string_startswith(path, "nkop:") ? path.substr(5) : path;
+  };
+  std::map<string, std::pair<string, std::shared_ptr<const Image>>> by_path;
+  for (const auto &[path, image] : images) {
+    by_path[without_scheme(path)] = {path, image};
+  }
+  for (Shader *shader : scene->shaders) {
+    if (!shader->graph) {
+      continue;
+    }
+    for (ShaderNode *node : shader->graph->nodes) {
+      ImageHandle *handle = nullptr;
+      ImageParams params;
+      ustring filename;
+      if (node->type == ImageTextureNode::get_node_type()) {
+        ImageTextureNode *texture = static_cast<ImageTextureNode *>(node);
+        handle = &texture->handle;
+        params = texture->image_params();
+        filename = texture->get_filename();
+      }
+      else if (node->type == EnvironmentTextureNode::get_node_type()) {
+        EnvironmentTextureNode *texture = static_cast<EnvironmentTextureNode *>(node);
+        handle = &texture->handle;
+        params = texture->image_params();
+        filename = texture->get_filename();
+      }
+      if (!handle || !handle->empty()) {
+        continue;
+      }
+      const auto image = by_path.find(without_scheme(filename.string()));
+      if (image != by_path.end()) {
+        *handle = scene->image_manager->add_image(
+            make_unique<NukeImageLoader>(image->second.first, image->second.second), params);
+      }
+    }
+  }
+}
+
 void add_cryptomatte_metadata(Scene *scene, const int types, RenderResult &result)
 {
   for (const auto &[layer, type] : kCryptomatteTypes) {
@@ -138,7 +232,7 @@ void add_cryptomatte_metadata(Scene *scene, const int types, RenderResult &resul
 /* Set a value on an attribute without authored value, converted to the attribute type. */
 void set_attribute(const UsdStageRefPtr &stage, const AttributeValue &value)
 {
-  if (value.value.empty() || !SdfPath::IsValidPathString(value.prim)) {
+  if ((value.value.empty() && value.asset.empty()) || !SdfPath::IsValidPathString(value.prim)) {
     return;
   }
   const UsdPrim prim = stage->GetPrimAtPath(SdfPath(value.prim));
@@ -148,7 +242,13 @@ void set_attribute(const UsdStageRefPtr &stage, const AttributeValue &value)
   }
   const std::vector<double> &v = value.value;
   const SdfValueTypeName type = attr.GetTypeName();
-  if (type == SdfValueTypeNames->Float) {
+  if (type == SdfValueTypeNames->Asset) {
+    attr.Set(SdfAssetPath(value.asset));
+  }
+  else if (v.empty()) {
+    return;
+  }
+  else if (type == SdfValueTypeNames->Float) {
     attr.Set(float(v[0]));
   }
   else if (type == SdfValueTypeNames->Double) {
@@ -246,11 +346,6 @@ std::string render(const std::string &usd_text, const RenderOptions &options, Re
 {
   result = RenderResult();
 
-  /* Write the scene as received from Nuke, for bug reports. */
-  if (const char *dump_path = getenv("NKCYCLES_DUMP_USD")) {
-    std::ofstream(dump_path) << usd_text;
-  }
-
   /* The combined pass first, then the requested ones. */
   std::vector<PassRequest> passes = {{"combined", "combined", 4}};
   passes.insert(passes.end(), options.passes.begin(), options.passes.end());
@@ -295,6 +390,10 @@ std::string render(const std::string &usd_text, const RenderOptions &options, Re
   for (const AttributeValue &value : options.attributes) {
     set_attribute(stage, value);
   }
+  /* Write the scene that is rendered, for bug reports. */
+  if (const char *dump_path = getenv("NKCYCLES_DUMP_USD")) {
+    cached->layer->Export(dump_path);
+  }
 
   if (!cached->reader || cached->meters_per_unit != meters_per_unit) {
     cached->reader.reset();
@@ -316,6 +415,7 @@ std::string render(const std::string &usd_text, const RenderOptions &options, Re
     return options.camera.empty() ? "No camera in the scene" : "No camera at " + options.camera;
   }
   scene->integrator->set_use_denoise(options.denoise);
+  set_nuke_images(scene, options.images);
 
   if (!same_passes(passes, cached->passes)) {
     const std::string message = create_passes(scene, passes);

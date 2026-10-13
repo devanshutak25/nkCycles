@@ -9,6 +9,7 @@
 
 #include <functional>
 #include <map>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -31,6 +32,16 @@ struct AttributeValue {
   std::string prim;
   std::string attribute;
   std::vector<double> value;
+  /* Value of an asset attribute. */
+  std::string asset;
+};
+
+/* A Nuke image used as texture. */
+struct Image {
+  int width = 0;
+  int height = 0;
+  /* Associated RGBA, bottom row first. */
+  std::vector<float> pixels;
 };
 
 struct RenderOptions {
@@ -45,6 +56,8 @@ struct RenderOptions {
   double frame = 0.0;
   std::vector<PassRequest> passes;
   std::vector<AttributeValue> attributes;
+  /* Images of Nuke nodes by the asset path the scene refers to them with ("nkop:/NkRoot/..."). */
+  std::map<std::string, std::shared_ptr<const Image>> images;
   /* Polled during the render, return true to cancel. */
   std::function<bool()> aborted;
 };
