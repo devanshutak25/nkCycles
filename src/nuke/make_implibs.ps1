@@ -6,8 +6,10 @@
 # Usage: pwsh make_implibs.ps1 <NUKE_ROOT> <OUT_DIR>
 param([Parameter(Mandatory)] [string]$NukeRoot, [Parameter(Mandatory)] [string]$OutDir)
 $ErrorActionPreference = 'Stop'
-$msvc = Get-ChildItem 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC' |
-  Sort-Object Name | Select-Object -Last 1
+# The latest MSVC of the latest Visual Studio (any edition) with the C++ tools.
+$vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+$vs = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+$msvc = Get-ChildItem (Join-Path $vs 'VC\Tools\MSVC') | Sort-Object Name | Select-Object -Last 1
 $bin = Join-Path $msvc.FullName 'bin\Hostx64\x64'
 New-Item -ItemType Directory -Force $OutDir | Out-Null
 $dlls = Get-ChildItem $NukeRoot -Filter *.dll | Where-Object { $_.Name -match '^(python3\d+|foundryboost_python3\d+.*)\.dll$' }
