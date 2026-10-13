@@ -47,6 +47,9 @@ if(NUKE_FOUND)
     # Bundled libraries that Nuke loads too, in another version. Shared on purpose: TBB (USD and
     # Cycles must use Nuke's scheduler) and the MSVC runtime.
     set(_nuke_private_dlls Iex.dll IlmThread.dll Imath.dll OpenEXR.dll OpenEXRCore.dll)
+    if(WITH_CYCLES_OPENVDB)
+      list(APPEND _nuke_private_dlls openvdb.dll)
+    endif()
     install(CODE "
       execute_process(
         COMMAND \"${NUKE_ROOT}/python.exe\" -I \"${CMAKE_CURRENT_SOURCE_DIR}/rename_dlls.py\"
