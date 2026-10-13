@@ -8,6 +8,8 @@
 
 #include "session/session.h"
 
+#include "util/unique_ptr.h"
+
 #include <pxr/imaging/cameraUtil/conformWindow.h>
 #include <pxr/usd/usd/common.h>
 #include <pxr/usd/usd/timeCode.h>
@@ -25,6 +27,25 @@ class HdCyclesFileReader {
                    const PXR_NS::SdfPath &camera_path,
                    const bool use_camera = true,
                    PXR_NS::CameraUtilConformWindowPolicy window_policy = PXR_NS::CameraUtilFit);
+
+  /* Keep the Hydra scene of a stage, to sync only the changes of the stage the next times.
+   * Without keep_nodes, the session nodes of the stage are removed with the reader. */
+  HdCyclesFileReader(Session *session,
+                     const PXR_NS::UsdStageRefPtr &stage,
+                     double meters_per_unit,
+                     bool keep_nodes = false);
+  ~HdCyclesFileReader();
+
+  /* Sync the stage changes since the last sync, at the given time. Returns false when
+   * use_camera is set and there is no matching camera. */
+  bool sync(PXR_NS::UsdTimeCode time,
+            const PXR_NS::SdfPath &camera_path,
+            const bool use_camera = true,
+            PXR_NS::CameraUtilConformWindowPolicy window_policy = PXR_NS::CameraUtilFit);
+
+ private:
+  struct State;
+  unique_ptr<State> state_;
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE

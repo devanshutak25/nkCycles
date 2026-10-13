@@ -92,48 +92,80 @@ void HdCyclesFileReader::read(Session *session,
                               const bool use_camera,
                               const CameraUtilConformWindowPolicy window_policy)
 {
+  HdCyclesFileReader reader(session, stage, UsdGeomGetStageMetersPerUnit(stage), true);
+  reader.sync(time, camera_path, use_camera, window_policy);
+}
+
+struct HdCyclesFileReader::State {
+  Session *session = nullptr;
+  UsdStageRefPtr stage;
+  const SdfPath task_path = SdfPath("/_hdCycles/DummyHdTask");
+  HdRprimCollection collection;
+
+  /* Destroyed in reverse order: the scene before the render index, the render index before the
+   * render delegate. */
+  unique_ptr<HdCyclesDelegate> render_delegate;
+  unique_ptr<HdRenderIndex> render_index;
+#ifdef WITH_HYDRA_SCENE_INDEX_TASKS
+  UsdImagingStageSceneIndexRefPtr stage_si;
+#else
+  unique_ptr<UsdImagingDelegate> scene_delegate;
+#endif
+};
+
+HdCyclesFileReader::HdCyclesFileReader(Session *session,
+                                       const UsdStageRefPtr &stage,
+                                       const double meters_per_unit,
+                                       const bool keep_nodes)
+    : state_(make_unique<State>())
+{
+  State &state = *state_;
+  state.session = session;
+  state.stage = stage;
+
   /* Init paths. */
   const SdfPath root_path = SdfPath::AbsoluteRootPath();
-  const SdfPath task_path("/_hdCycles/DummyHdTask");
 
   /* Create render delegate. */
   HdRenderSettingsMap settings_map;
-  settings_map.insert(std::make_pair(HdCyclesRenderSettingsTokens->stageMetersPerUnit,
-                                     VtValue(UsdGeomGetStageMetersPerUnit(stage))));
+  settings_map.insert(
+      std::make_pair(HdCyclesRenderSettingsTokens->stageMetersPerUnit, VtValue(meters_per_unit)));
 
-  HdCyclesDelegate render_delegate(settings_map, session, true);
+  state.render_delegate = make_unique<HdCyclesDelegate>(settings_map, session, keep_nodes);
+
+  /* Create render index. */
+  state.render_index.reset(HdRenderIndex::New(state.render_delegate.get(), {}));
+
+  state.collection = HdRprimCollection(HdTokens->geometry,
+                                       HdReprSelector(HdReprTokens->smoothHull));
+  state.collection.SetRootPath(root_path);
 
 #ifdef WITH_HYDRA_SCENE_INDEX_TASKS
-  /* Create render index. */
-  unique_ptr<HdRenderIndex> render_index(HdRenderIndex::New(&render_delegate, {}));
   /* Set up scene index from USD stage for easy consumption.
    * Do ext computation (e.g. skinning), flattening and resolve material bindings. */
-  UsdImagingStageSceneIndexRefPtr stage_si = UsdImagingStageSceneIndex::New(nullptr);
-  stage_si->SetStage(stage);
-  stage_si->SetTime(time);
+  state.stage_si = UsdImagingStageSceneIndex::New(nullptr);
+  state.stage_si->SetStage(stage);
 
-  HdSceneIndexBaseRefPtr filtered = stage_si;
+  HdSceneIndexBaseRefPtr filtered = state.stage_si;
   filtered = HdSiExtComputationPrimvarPruningSceneIndex::New(filtered);
   filtered = HdFlatteningSceneIndex::New(filtered, UsdImagingFlattenedDataSourceProviders());
   filtered = UsdImagingMaterialBindingsResolvingSceneIndex::New(filtered, nullptr);
 
   /* Provide DummyHdTask as a task prim to the scene index. */
-  HdRprimCollection collection(HdTokens->geometry, HdReprSelector(HdReprTokens->smoothHull));
-  collection.SetRootPath(root_path);
-
   const TfTokenVector render_tags = {HdRenderTagTokens->geometry, HdRenderTagTokens->render};
 
   HdContainerDataSourceHandle task_ds =
       HdLegacyTaskSchema::Builder()
           .SetFactory(HdRetainedTypedSampledDataSource<HdLegacyTaskFactorySharedPtr>::New(
               HdMakeLegacyTaskFactory<DummyHdTask>()))
-          .SetCollection(HdRetainedTypedSampledDataSource<HdRprimCollection>::New(collection))
+          .SetCollection(
+              HdRetainedTypedSampledDataSource<HdRprimCollection>::New(state.collection))
           .SetRenderTags(HdRetainedTypedSampledDataSource<TfTokenVector>::New(render_tags))
           .Build();
 
   HdRetainedSceneIndexRefPtr task_si = HdRetainedSceneIndex::New();
   task_si->AddPrims(
-      {{task_path,
+      {{state.task_path,
         HdPrimTypeTokens->task,
         HdRetainedContainerDataSource::New(HdLegacyTaskSchema::GetSchemaToken(), task_ds)}});
 
@@ -142,63 +174,64 @@ void HdCyclesFileReader::read(Session *session,
   merging_si->AddInputScene(task_si, root_path);
 
   const bool needs_prefixing = false;
-  render_index->InsertSceneIndex(merging_si, root_path, needs_prefixing);
+  state.render_index->InsertSceneIndex(merging_si, root_path, needs_prefixing);
+#else
+  /* Create scene delegate, add render tags and create prims. */
+  state.scene_delegate = make_unique<UsdImagingDelegate>(state.render_index.get(), root_path);
+  state.render_index->InsertTask<DummyHdTask>(state.scene_delegate.get(), state.task_path);
+  state.scene_delegate->Populate(stage->GetPseudoRoot());
+#endif
+}
 
-  stage_si->ApplyPendingUpdates();
+HdCyclesFileReader::~HdCyclesFileReader() = default;
 
-  render_index->EnqueueCollectionToSync(collection);
+bool HdCyclesFileReader::sync(const UsdTimeCode time,
+                              const SdfPath &camera_path,
+                              const bool use_camera,
+                              const CameraUtilConformWindowPolicy window_policy)
+{
+  State &state = *state_;
+
+  /* Apply the stage changes since the last sync. */
+#ifdef WITH_HYDRA_SCENE_INDEX_TASKS
+  state.stage_si->SetTime(time);
+  state.stage_si->ApplyPendingUpdates();
+#else
+  state.scene_delegate->ApplyPendingUpdates();
+  state.scene_delegate->SetTime(time);
+#endif
 
   /* Sync prims. */
+  state.render_index->EnqueueCollectionToSync(state.collection);
+
   HdTaskContext task_context;
   HdTaskSharedPtrVector tasks;
-  if (HdTaskSharedPtr const &task = render_index->GetTask(task_path)) {
+  if (HdTaskSharedPtr const &task = state.render_index->GetTask(state.task_path)) {
     tasks.push_back(task);
   }
 
-  render_index->SyncAll(&tasks, &task_context);
-  render_delegate.CommitResources(&render_index->GetChangeTracker());
+  state.render_index->SyncAll(&tasks, &task_context);
+  state.render_delegate->CommitResources(&state.render_index->GetChangeTracker());
 
-#else
-  /* Create render index and scene delegate. */
-  unique_ptr<HdRenderIndex> render_index(HdRenderIndex::New(&render_delegate, {}));
-  unique_ptr<UsdImagingDelegate> scene_delegate = make_unique<UsdImagingDelegate>(
-      render_index.get(), root_path);
-
-  /* Add render tags and collection to render index. */
-  HdRprimCollection collection(HdTokens->geometry, HdReprSelector(HdReprTokens->smoothHull));
-  collection.SetRootPath(root_path);
-
-  render_index->InsertTask<DummyHdTask>(scene_delegate.get(), task_path);
-  render_index->EnqueueCollectionToSync(collection);
-
-  /* Create prims. */
-  scene_delegate->Populate(stage->GetPseudoRoot());
-  scene_delegate->SetTime(time);
-
-  /* Sync prims. */
-  HdTaskContext task_context;
-  HdTaskSharedPtrVector tasks;
-  tasks.push_back(render_index->GetTask(task_path));
-
-  render_index->SyncAll(&tasks, &task_context);
-  render_delegate.CommitResources(&render_index->GetChangeTracker());
-#endif
+  if (!use_camera) {
+    return true;
+  }
 
   /* Use first camera in stage.
    * TODO: get camera from UsdRender if available. */
-  if (use_camera) {
-    for (const UsdPrim &prim : stage->Traverse()) {
-      if (prim.IsA<UsdGeomCamera>() && (camera_path.IsEmpty() || prim.GetPath() == camera_path)) {
-        HdSprim *sprim = render_index->GetSprim(HdPrimTypeTokens->camera, prim.GetPath());
-        if (sprim) {
-          HdCyclesCamera *camera = dynamic_cast<HdCyclesCamera *>(sprim);
-          camera->SetWindowPolicy(window_policy);
-          camera->ApplyCameraSettings(render_delegate.GetRenderParam(), session->scene->camera);
-          break;
-        }
+  for (const UsdPrim &prim : state.stage->Traverse()) {
+    if (prim.IsA<UsdGeomCamera>() && (camera_path.IsEmpty() || prim.GetPath() == camera_path)) {
+      HdSprim *sprim = state.render_index->GetSprim(HdPrimTypeTokens->camera, prim.GetPath());
+      if (sprim) {
+        HdCyclesCamera *camera = dynamic_cast<HdCyclesCamera *>(sprim);
+        camera->SetWindowPolicy(window_policy);
+        camera->ApplyCameraSettings(state.render_delegate->GetRenderParam(),
+                                    state.session->scene->camera);
+        return true;
       }
     }
   }
+  return false;
 }
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE
