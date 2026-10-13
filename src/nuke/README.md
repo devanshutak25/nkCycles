@@ -20,12 +20,19 @@ The node is in *3D > CyclesRender*.
 
 ## Usage
 
-- **Materials:** `PreviewSurface`, and images bound directly with `GeoBindMaterial` (lit by the
-  scene lights). Images connected to material inputs are used as textures, the color knobs
-  multiply them.
+- **Materials:** `PreviewSurface`, `BasicSurface`, `Project3DShader`, `MergeLayerShader`,
+  `BlendSurface` (its opacity), `FillShader`, `ConstantShader`, and images bound directly with
+  `GeoBindMaterial` (lit by the scene lights). Images connected to material inputs are used as
+  textures, the color knobs multiply them. `Project3DShader` projects like Nuke (crop, front or
+  back faces, clipping planes, the projector's window), without occlusion. `BasicSurface` maps
+  its Phong specular to a softer one, without its shininess map and B input. Images without
+  alpha are opaque. `WireframeShader` is not supported.
 - **Lights:** `DirectLight1`, `PointLight`, `SpotLight1` and `EnvironmentLight` (with its image).
   Intensities follow USD lights: a `DirectLight1` gives the light of a sun disc of its angle, so
-  turn *normalize* on to make the intensity the irradiance.
+  turn *normalize* on to make the intensity the irradiance. Like ScanlineRender2, the background
+  stays transparent: an `EnvironmentLight` lights the scene and shows in reflections only.
+- **Holdout:** prim paths (separated by spaces) whose objects are cut out of the render, with
+  alpha 0, while they still cast shadows and show in reflections.
 - **Outputs:** like ScanlineRender, *depth* (1/z in scene units, 0 for the background,
   `depth.Z` by default), *normal* and *position* (world space) and *albedo* go to the channels
   picked in their knobs. The light pass toggles add layers named like Blender's, which add up
@@ -38,6 +45,14 @@ The node is in *3D > CyclesRender*.
   in millimeters and the scene in meters (Nuke 17: in the units of the camera's *world to
   meters*). Cameras of imported USD files use their own f-stop. When turned off there is none,
   even if the scene has an f-stop.
+
+- **Cameras:** the window knobs (*win_translate*, *win_scale*, *winroll*) and orthographic
+  cameras like the classic ScanlineRender. A roll with a different x and y window scale is a
+  rotation here, a shear in Nuke.
+- **Motion blur:** *motion blur steps* (0 off) and the *shutter* knobs like ScanlineRender2.
+  Cameras, transforms and deforming meshes blur; instances move with their prototype only, and
+  curves and points do not blur. A FrameHold before the node holds the motion too. In Nuke 15 the
+  scene is read at the shutter open, center and close only.
 
 The render is kept for all layers of a frame, and the Cycles session between renders, so
 changing a light or a knob only updates what changed.

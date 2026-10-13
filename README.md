@@ -16,14 +16,17 @@ denoising, render passes and Cryptomatte.
 |---|---|
 | Devices | OptiX and CUDA (chosen automatically, OptiX > CUDA > CPU) and CPU, with denoising |
 | Scenes | Meshes, cameras, `DirectLight1`, `PointLight`, `SpotLight1`, `EnvironmentLight` (with its image) and imported USD files |
-| Materials | `PreviewSurface`, images bound directly as materials, Nuke images as textures |
+| Materials | `PreviewSurface`, `BasicSurface`, `Project3DShader` (camera projection), `MergeLayerShader`, `FillShader`, `ConstantShader`, images bound directly as materials, Nuke images as textures |
+| Cameras | Depth of field, window knobs, orthographic, motion blur (cameras, transforms, deforming meshes) |
 | Passes | Depth (1/z, like ScanlineRender), normal, position, albedo, Blender-style light passes, Cryptomatte for Nuke's Cryptomatte node |
 | Interaction | The Cycles session is kept between renders: changing a knob only updates what changed |
 | Images | Any size (large images are rendered in tiles) |
 
 Known limits:
-- No motion blur yet, and no camera window (`win_translate`, `win_scale`) knobs.
-- `BasicSurface` and `Project3DShader` materials are not translated yet.
+- No motion blur of instancers, curves and points; Nuke 15 samples the shutter at three frames.
+- No shadow catcher yet.
+- `Project3DShader` without occlusion; `BasicSurface` specular is softer than Nuke's Phong; no
+  `WireframeShader`.
 - Cryptomatte names of instanced prims appear once the scene has been rendered (their IDs always work).
 - Windows only for now.
 
