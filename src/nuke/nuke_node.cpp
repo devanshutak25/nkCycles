@@ -6,14 +6,19 @@
 
 #include "nuke/render.h"
 
+#include <DDImage/CameraOp.h>
 #include <DDImage/Format.h>
 #include <DDImage/GeomOp.h>
 #include <DDImage/Knobs.h>
+#include <DDImage/LightOp.h>
+#include <DDImage/MetaData.h>
 #include <DDImage/PlanarIop.h>
 #include <usg/geom/Stage.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <mutex>
+#include <set>
 
 #ifdef _WIN32
 #  ifndef WIN32_LEAN_AND_MEAN
@@ -39,6 +44,62 @@ const char *const kHelp =
 
 const char *const kDevices[] = {"AUTO", "OPTIX", "CUDA", "CPU", nullptr};
 
+/* Light passes of Blender, one layer per pass. Light passes are divided by the matching color
+ * pass: beauty = (DiffDir + DiffInd) * DiffCol + ... + Emit + Env. */
+struct LightPasses {
+  const char *knob;
+  const char *label;
+  std::vector<std::pair<const char *, const char *>> layers; /* Layer, Cycles pass type. */
+};
+const LightPasses kLightPasses[] = {
+    {"diffuse_passes",
+     "diffuse",
+     {{"DiffDir", "diffuse_direct"},
+      {"DiffInd", "diffuse_indirect"},
+      {"DiffCol", "diffuse_color"}}},
+    {"glossy_passes",
+     "glossy",
+     {{"GlossDir", "glossy_direct"},
+      {"GlossInd", "glossy_indirect"},
+      {"GlossCol", "glossy_color"}}},
+    {"transmission_passes",
+     "transmission",
+     {{"TransDir", "transmission_direct"},
+      {"TransInd", "transmission_indirect"},
+      {"TransCol", "transmission_color"}}},
+    {"volume_passes",
+     "volume",
+     {{"VolumeDir", "volume_direct"}, {"VolumeInd", "volume_indirect"}}},
+    {"emission_pass", "emission", {{"Emit", "emission"}}},
+    {"environment_pass", "environment", {{"Env", "background"}}},
+    {"ao_pass", "AO", {{"AO", "ao"}}},
+};
+constexpr int kNumLightPasses = sizeof(kLightPasses) / sizeof(kLightPasses[0]);
+
+const char *const kCryptomatteLayers[] = {"CryptoObject", "CryptoMaterial", "CryptoAsset"};
+
+/* Knobs of Nuke's lights and cameras that are not written into the stage (Nuke 15.0), with the
+ * USD attribute they stand for. Light knobs mirror UsdLux inputs. */
+struct KnobAttribute {
+  const char *knob;
+  const char *attribute;
+  int size;
+};
+const KnobAttribute kLightKnobs[] = {
+    {"color", "inputs:color", 3},
+    {"intensity", "inputs:intensity", 1},
+    {"exposure", "inputs:exposure", 1},
+    {"enable_color_temperature", "inputs:enableColorTemperature", 1},
+    {"color_temperature", "inputs:colorTemperature", 1},
+    {"normalize", "inputs:normalize", 1},
+    {"diffuse", "inputs:diffuse", 1},
+    {"specular", "inputs:specular", 1},
+    {"radius", "inputs:radius", 1},
+    {"angle", "inputs:angle", 1},
+    {"cone_angle", "inputs:shaping:cone:angle", 1},
+    {"cone_softness", "inputs:shaping:cone:softness", 1},
+};
+
 /* Folder of this plugin, where the Cycles kernels are installed. */
 std::string plugin_directory()
 {
@@ -62,6 +123,30 @@ std::string plugin_directory()
 #endif
   const size_t slash = path.find_last_of("/\\");
   return slash == std::string::npos ? std::string() : path.substr(0, slash);
+}
+
+/* getChannel() can add to Nuke's global channel list, which is not thread safe. */
+Channel layer_channel(const std::string &layer, const char *name)
+{
+  static std::mutex mutex;
+  const std::lock_guard<std::mutex> lock(mutex);
+  return getChannel((layer + "." + name).c_str());
+}
+
+void add_knob_values(Op *op,
+                     const KnobAttribute &knob_attribute,
+                     const std::string &prim,
+                     std::vector<nkcycles::AttributeValue> &values)
+{
+  Knob *knob = op->knob(knob_attribute.knob);
+  if (!knob) {
+    return;
+  }
+  nkcycles::AttributeValue value{prim, knob_attribute.attribute, {}};
+  for (int i = 0; i < knob_attribute.size; i++) {
+    value.value.push_back(knob->get_value_at(op->outputContext(), i));
+  }
+  values.push_back(value);
 }
 
 class CyclesRender : public PlanarIop {
@@ -118,6 +203,34 @@ class CyclesRender : public PlanarIop {
     Enumeration_knob(f, &_device, kDevices, "device");
     Tooltip(f, "AUTO uses the best GPU (OptiX, then CUDA), or the CPU when there is none.");
     Bool_knob(f, &_denoise, "denoise");
+    Bool_knob(f, &_depth_of_field, "depth_of_field", "depth of field");
+    Tooltip(f, "Focus at the focal distance of the camera, blurred by its f-stop.");
+
+    Divider(f, "outputs");
+    Channel_knob(f, _depth_channel, 1, "depth_channel", "depth");
+    Tooltip(f, "1/z in scene units, 0 for the background, like ScanlineRender.");
+    Channel_knob(f, _normal_channel, 3, "N_channel", "normal");
+    Tooltip(f, "World space shading normal.");
+    Channel_knob(f, _position_channel, 3, "P_channel", "position");
+    Tooltip(f, "World space position in scene units.");
+    Channel_knob(f, _albedo_channel, 3, "albedo_channel", "albedo");
+    Tooltip(f, "Surface color, as used by the denoiser.");
+    for (int i = 0; i < kNumLightPasses; i++) {
+      Bool_knob(f, &_light_passes[i], kLightPasses[i].knob, kLightPasses[i].label);
+      if (i == 0) {
+        SetFlags(f, Knob::STARTLINE);
+        Tooltip(f,
+                "Light passes in layers named like Blender's (DiffDir, DiffInd, DiffCol, ...).");
+      }
+    }
+    Bool_knob(f, &_cryptomatte[0], "crypto_object", "cryptomatte object");
+    SetFlags(f, Knob::STARTLINE);
+    Tooltip(f, "Cryptomatte layers for Nuke's Cryptomatte node.");
+    Bool_knob(f, &_cryptomatte[1], "crypto_material", "material");
+    Bool_knob(f, &_cryptomatte[2], "crypto_asset", "asset");
+    Int_knob(f, &_cryptomatte_levels, "crypto_levels", "levels");
+    SetRange(f, 2, 16);
+    Tooltip(f, "Number of overlapping IDs per pixel, two per layer.");
   }
 
   void _validate(bool for_real) override
@@ -127,7 +240,47 @@ class CyclesRender : public PlanarIop {
       info_.full_size_format(*_formats.fullSizeFormat());
     }
     info_.set(format());
-    info_.channels(Mask_RGBA);
+
+    _passes.clear();
+    _outputs.clear();
+    for (int i = 0; i < 4; i++) {
+      _outputs.push_back({"combined", 4, i, Channel(Chan_Red + i)});
+    }
+    add_pass("depth", "depth", _depth_channel, 1);
+    add_pass("normal", "normal", _normal_channel, 3);
+    add_pass("position", "position", _position_channel, 3);
+    add_pass("albedo", "denoising_albedo", _albedo_channel, 3);
+    const char *const rgb[] = {"red", "green", "blue", "alpha"};
+    for (int i = 0; i < kNumLightPasses; i++) {
+      for (const auto &[layer, type] : kLightPasses[i].layers) {
+        if (_light_passes[i]) {
+          Channel channels[3];
+          for (int c = 0; c < 3; c++) {
+            channels[c] = layer_channel(layer, rgb[c]);
+          }
+          add_pass(layer, type, channels, 3);
+        }
+      }
+    }
+    /* Two IDs per 4 channel layer: id, coverage, id, coverage. */
+    for (int i = 0; i < 3; i++) {
+      for (int level = 0; _cryptomatte[i] && level < (_cryptomatte_levels + 1) / 2; level++) {
+        char layer[32];
+        snprintf(layer, sizeof(layer), "%s%02d", kCryptomatteLayers[i], level);
+        Channel channels[4];
+        for (int c = 0; c < 4; c++) {
+          channels[c] = layer_channel(layer, rgb[c]);
+        }
+        add_pass(layer, "cryptomatte", channels, 4);
+      }
+    }
+
+    ChannelSet channels;
+    for (const Output &output : _outputs) {
+      channels += output.channel;
+    }
+    info_.channels(channels);
+
     if (GeomOp *geo = op_cast<GeomOp *>(Op::input(0))) {
       geo->validate(for_real);
     }
@@ -150,6 +303,7 @@ class CyclesRender : public PlanarIop {
     return true;
   }
 
+  /* Nuke asks for one plane per layer: all passes are rendered once and kept for the others. */
   void renderStripe(ImagePlane &plane) override
   {
     plane.makeWritable();
@@ -158,9 +312,128 @@ class CyclesRender : public PlanarIop {
       plane.fillChannel(z, 0.0f);
     }
 
+    if (!render_once()) {
+      if (!_error.empty() && !aborted()) {
+        error("Cycles: %s", _error.c_str());
+      }
+      return;
+    }
+
+    /* Copy the bottom-up Cycles image into the plane, clipped to its bounds. */
+    const int width = format().width(), height = format().height();
+    const Box &bounds = plane.bounds();
+    const int x0 = std::max(bounds.x(), 0), x1 = std::min(bounds.r(), width);
+    const int y0 = std::max(bounds.y(), 0), y1 = std::min(bounds.t(), height);
+    foreach(z, plane.channels())
+    {
+      const auto output = std::find_if(
+          _outputs.begin(), _outputs.end(), [&](const Output &o) { return o.channel == z; });
+      if (output == _outputs.end()) {
+        continue;
+      }
+      const auto pixels = _result.passes.find(output->pass);
+      if (pixels == _result.passes.end()) {
+        continue;
+      }
+      const int chan = plane.chanNo(z);
+      for (int y = y0; y < y1; y++) {
+        const float *row = pixels->second.data() + size_t(y) * width * output->channels;
+        for (int x = x0; x < x1; x++) {
+          plane.writableAt(x, y, chan) = row[x * output->channels + output->component];
+        }
+      }
+    }
+  }
+
+  /* Cryptomatte metadata, rendering the image when it was not yet. */
+  const MetaData::Bundle &_fetchMetaData(const char * /*key*/) override
+  {
+    _metadata = MetaData::Bundle();
+    if (std::find(_cryptomatte, _cryptomatte + 3, true) == _cryptomatte + 3) {
+      return _metadata;
+    }
+    validate(true);
+    if (render_once()) {
+      for (const auto &[key, value] : _result.metadata) {
+        /* Keys as Nuke's Read gives them, Write writes them without "exr/". */
+        _metadata.setData("exr/" + key, value);
+      }
+    }
+    return _metadata;
+  }
+
+ private:
+  /* A Cycles pass copied into Nuke channels. */
+  struct Output {
+    std::string pass;
+    int channels;
+    int component;
+    Channel channel;
+  };
+
+  void add_pass(const std::string &name, const char *type, const Channel *channels, int count)
+  {
+    if (std::count(channels, channels + count, Chan_Black) == count) {
+      return;
+    }
+    _passes.push_back({name, type, count});
+    for (int i = 0; i < count; i++) {
+      if (channels[i] != Chan_Black) {
+        _outputs.push_back({name, count, i, channels[i]});
+      }
+    }
+  }
+
+  /* Values of the light and camera knobs Nuke does not write into the stage. */
+  void collect_attributes(Op *op,
+                          std::set<Op *> &visited,
+                          std::vector<nkcycles::AttributeValue> &values) const
+  {
+    if (!op || !visited.insert(op).second) {
+      return;
+    }
+    if (AxisOp *axis = dynamic_cast<AxisOp *>(op)) {
+      const std::string prim = axis->primFullPath().asString();
+      if (dynamic_cast<LightOp *>(op)) {
+        for (const KnobAttribute &knob : kLightKnobs) {
+          add_knob_values(op, knob, prim, values);
+        }
+      }
+      else if (dynamic_cast<CameraOp *>(op)) {
+        Knob *near_knob = op->knob("near"), *far_knob = op->knob("far");
+        if (near_knob && far_knob) {
+          values.push_back({prim,
+                            "clippingRange",
+                            {near_knob->get_value_at(op->outputContext()),
+                             far_knob->get_value_at(op->outputContext())}});
+        }
+        if (_depth_of_field) {
+          add_knob_values(op, {"focal_point", "focusDistance", 1}, prim, values);
+        }
+      }
+    }
+    for (int i = 0; i < op->inputs(); i++) {
+      collect_attributes(op->input(i), visited, values);
+    }
+  }
+
+  /* Render all passes, once per hash. Returns false when there is no image. */
+  bool render_once()
+  {
+    const std::lock_guard<std::mutex> lock(_render_mutex);
+    Hash key = hash();
+    key.append(outputContext().frame());
+    if (_rendered && _rendered_key == key) {
+      return _error.empty();
+    }
+    _rendered = false;
+    _result = nkcycles::RenderResult();
+    _error.clear();
+
     GeomOp *geo = op_cast<GeomOp *>(Op::input(0));
     if (!geo) {
-      return;
+      _error = "No input scene";
+      return false;
     }
 
     static std::once_flag init_flag;
@@ -170,8 +443,10 @@ class CyclesRender : public PlanarIop {
     GeomOp::buildStage(stage, usg::ArgSet(), geo);
     std::string usd_text;
     if (!stage || !stage->exportToString(usd_text, false)) {
-      error("Failed to export the input scene");
-      return;
+      _error = "Failed to export the input scene";
+      _rendered = true;
+      _rendered_key = key;
+      return false;
     }
 
     const Format &fmt = format();
@@ -183,43 +458,45 @@ class CyclesRender : public PlanarIop {
     options.denoise = _denoise;
     options.camera = _camera;
     options.frame = outputContext().frame();
+    options.passes = _passes;
+    std::set<Op *> visited;
+    collect_attributes(geo, visited, options.attributes);
     options.aborted = [this] { return aborted(); };
 
-    std::vector<float> rgba;
-    const std::string message = nkcycles::render(usd_text, options, rgba);
-    if (!message.empty()) {
-      if (!aborted()) {
-        error("Cycles: %s", message.c_str());
-      }
-      return;
+    _error = nkcycles::render(usd_text, options, _result);
+    if (!_error.empty() && aborted()) {
+      /* Render again next time. */
+      return false;
     }
-
-    /* Copy the bottom-up Cycles image into the plane, clipped to its bounds. */
-    const Box &bounds = plane.bounds();
-    const int x0 = std::max(bounds.x(), 0), x1 = std::min(bounds.r(), options.width);
-    const int y0 = std::max(bounds.y(), 0), y1 = std::min(bounds.t(), options.height);
-    foreach(z, plane.channels())
-    {
-      const int chan = plane.chanNo(z);
-      const int component = colourIndex(z);
-      if (component > 3) {
-        continue;
-      }
-      for (int y = y0; y < y1; y++) {
-        const float *row = rgba.data() + size_t(y) * options.width * 4;
-        for (int x = x0; x < x1; x++) {
-          plane.writableAt(x, y, chan) = row[x * 4 + component];
-        }
-      }
-    }
+    _rendered = true;
+    _rendered_key = key;
+    return _error.empty();
   }
 
- private:
   FormatPair _formats;
   std::string _camera;
   int _samples = 64;
   int _device = 0;
   bool _denoise = true;
+  bool _depth_of_field = false;
+  Channel _depth_channel[1] = {Chan_Z};
+  Channel _normal_channel[3] = {Chan_Black, Chan_Black, Chan_Black};
+  Channel _position_channel[3] = {Chan_Black, Chan_Black, Chan_Black};
+  Channel _albedo_channel[3] = {Chan_Black, Chan_Black, Chan_Black};
+  bool _light_passes[kNumLightPasses] = {};
+  bool _cryptomatte[3] = {};
+  int _cryptomatte_levels = 6;
+
+  /* Set by _validate. */
+  std::vector<nkcycles::PassRequest> _passes;
+  std::vector<Output> _outputs;
+
+  std::mutex _render_mutex;
+  bool _rendered = false;
+  Hash _rendered_key;
+  nkcycles::RenderResult _result;
+  std::string _error;
+  MetaData::Bundle _metadata;
 };
 
 Iop *build(Node *node)

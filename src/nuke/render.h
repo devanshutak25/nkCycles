@@ -8,10 +8,30 @@
 #pragma once
 
 #include <functional>
+#include <map>
 #include <string>
 #include <vector>
 
 namespace nkcycles {
+
+/* A Cycles pass to read back, besides the "combined" pass that is always rendered. */
+struct PassRequest {
+  /* Unique name, the key in RenderResult::passes. Cryptomatte passes are named like Blender's
+   * layers: "CryptoObject00", "CryptoMaterial01", ... */
+  std::string name;
+  /* Cycles pass type name: "depth", "normal", "diffuse_direct", "cryptomatte", ... */
+  std::string type;
+  /* Components per pixel. */
+  int channels = 3;
+};
+
+/* A value Nuke keeps on a knob but does not write into the stage (light and camera knobs).
+ * Set on the prim attribute when the stage has no authored value. */
+struct AttributeValue {
+  std::string prim;
+  std::string attribute;
+  std::vector<double> value;
+};
 
 struct RenderOptions {
   int width = 0;
@@ -23,17 +43,26 @@ struct RenderOptions {
   /* Camera prim path, empty for the first camera in the stage. */
   std::string camera;
   double frame = 0.0;
+  std::vector<PassRequest> passes;
+  std::vector<AttributeValue> attributes;
   /* Polled during the render, return true to cancel. */
   std::function<bool()> aborted;
+};
+
+struct RenderResult {
+  /* Pixels of "combined" (RGBA) and of each requested pass, width * height * channels, bottom
+   * row first. Like Nuke, depth is 1/z (0 for the background) and position is in stage units. */
+  std::map<std::string, std::vector<float>> passes;
+  /* Cryptomatte metadata of the specification: "cryptomatte/<id>/name", ".../manifest", ... */
+  std::map<std::string, std::string> metadata;
 };
 
 /* Directory holding the Cycles kernels ("lib" sub-folder). */
 void init(const std::string &root_path);
 
-/* Render a USD layer given as text. Fills rgba with width * height RGBA pixels, bottom row
- * first. Returns an error message, or an empty string on success. */
+/* Render a USD layer given as text. Returns an error message, or an empty string on success. */
 std::string render(const std::string &usd_text,
                    const RenderOptions &options,
-                   std::vector<float> &rgba);
+                   RenderResult &result);
 
 }  // namespace nkcycles
