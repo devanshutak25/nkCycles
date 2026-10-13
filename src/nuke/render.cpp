@@ -36,6 +36,7 @@
 #include <pxr/usd/usd/attribute.h>
 #include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usd/stage.h>
+#include <pxr/usd/usdGeom/camera.h>
 #include <pxr/usd/usdGeom/gprim.h>
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdGeom/tokens.h>
@@ -300,6 +301,7 @@ struct CachedSession {
   SdfLayerRefPtr layer;
   UsdStageRefPtr stage;
   double meters_per_unit = 0.0;
+  std::vector<float> motion_times;
   unique_ptr<HD_CYCLES_NS::HdCyclesFileReader> reader;
   std::vector<PassRequest> passes;
 };
@@ -423,16 +425,40 @@ std::string render(const std::string &usd_text, const RenderOptions &options, Re
   for (const AttributeValue &value : options.attributes) {
     set_attribute(stage, value);
   }
+  /* Motion blur: the motion steps evenly over the shutter, in time codes around the frame. */
+  std::vector<float> motion_times;
+  if (options.motion_steps > 1 && options.shutter > 0.0) {
+    for (int step = 0; step < options.motion_steps; step++) {
+      motion_times.push_back(
+          float(options.shutter * (double(step) / (options.motion_steps - 1) - 0.5)));
+    }
+    motion_times[options.motion_steps / 2] = 0.0f;
+    /* USD imaging without scene indices samples over the shutter of the camera. */
+    for (const UsdPrim &prim : stage->Traverse()) {
+      if (prim.IsA<UsdGeomCamera>()) {
+        const UsdGeomCamera camera(prim);
+        camera.GetShutterOpenAttr().Clear();
+        camera.GetShutterOpenAttr().Set(double(motion_times.front()));
+        camera.GetShutterCloseAttr().Clear();
+        camera.GetShutterCloseAttr().Set(double(motion_times.back()));
+      }
+    }
+  }
+
   /* Write the scene that is rendered, for bug reports. */
   if (const char *dump_path = getenv("NKCYCLES_DUMP_USD")) {
     cached->layer->Export(dump_path);
   }
 
-  if (!cached->reader || cached->meters_per_unit != meters_per_unit) {
+  /* The reader samples the motion steps when it syncs a prim: a new one for other steps. */
+  if (!cached->reader || cached->meters_per_unit != meters_per_unit ||
+      cached->motion_times != motion_times)
+  {
     cached->reader.reset();
     cached->reader = make_unique<HD_CYCLES_NS::HdCyclesFileReader>(
-        session, stage, meters_per_unit);
+        session, stage, meters_per_unit, false, motion_times);
     cached->meters_per_unit = meters_per_unit;
+    cached->motion_times = motion_times;
   }
 
   /* Image size first, the camera window is conformed to it when the scene is synced. */
@@ -460,6 +486,10 @@ std::string render(const std::string &usd_text, const RenderOptions &options, Re
   /* Each sync applies the camera again, so this lasts for this render only. */
   if (!options.depth_of_field) {
     scene->camera->set_aperturesize(0.0f);
+  }
+  scene->integrator->set_motion_blur(!motion_times.empty());
+  if (!motion_times.empty()) {
+    scene->camera->set_shuttertime(float(options.shutter));
   }
   scene->integrator->set_use_denoise(options.denoise);
   /* The session only raises the samples, but their count sets up the sampling pattern. */

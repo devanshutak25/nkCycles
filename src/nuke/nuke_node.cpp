@@ -14,6 +14,7 @@
 #include <DDImage/MaterialOpI.h>
 #include <DDImage/MetaData.h>
 #include <DDImage/PlanarIop.h>
+#include <DDImage/Shutter.h>
 #include <DDImage/ddImageVersionNumbers.h>
 #if kDDImageVersionInteger >= 161000
 #  include <DDImage/CameraSceneOp.h>
@@ -337,6 +338,12 @@ class CyclesRender : public PlanarIop {
     Bool_knob(f, &_denoise, "denoise");
     Bool_knob(f, &_depth_of_field, "depth_of_field", "depth of field");
     Tooltip(f, "Focus at the focal distance of the camera, blurred by its f-stop.");
+    Int_knob(f, &_shutter_steps, "shutter_steps", "motion blur steps");
+    SetRange(f, 0, 16);
+    Tooltip(f,
+            "Motion blur over the shutter: 0 off, 1 a straight blur, more steps follow curved "
+            "motion. The scene is read at the center of the shutter and evenly around it.");
+    _shutter.knobs(f);
 
     Divider(f, "outputs");
     Channel_knob(f, _depth_channel, 1, "depth_channel", "depth");
@@ -638,15 +645,51 @@ class CyclesRender : public PlanarIop {
     prepared->key = key;
     prepared->outputs = outputs;
     /* The input is made at the frame that FrameHold or TimeOffset nodes before us map to. */
-    const double frame = geo ? geo->outputContext().frame() : outputContext().frame();
+    double frame = geo ? geo->outputContext().frame() : outputContext().frame();
+    /* Motion blur: the input at frames evenly spread over the shutter, an odd count so the
+     * center is one of them. FrameHold and TimeOffset nodes map these frames too. */
+    std::vector<GeomOp *> shutter_geos;
+    std::vector<double> shutter_frames;
+    if (geo && _shutter_steps > 0 && _shutter.getDuration() > 0.0) {
+      const int steps = _shutter_steps + _shutter_steps % 2;
+      for (int i = 0; i <= steps; i++) {
+        OutputContext context = outputContext();
+        context.setFrame(context.frame() + _shutter.calcOffset() +
+                         _shutter.getDuration() * i / steps);
+        GeomOp *op = op_cast<GeomOp *>(node_input(0, Op::EXECUTABLE_INPUT, &context));
+        if (!op) {
+          shutter_geos.clear();
+          shutter_frames.clear();
+          break;
+        }
+        op->validate(true);
+        shutter_geos.push_back(op);
+        /* Read now: Nuke may give the same op for the next frame. */
+        shutter_frames.push_back(op->outputContext().frame());
+      }
+    }
+    double shutter = 0.0;
+    if (!shutter_frames.empty()) {
+      frame = shutter_frames[shutter_frames.size() / 2];
+      shutter = shutter_frames.back() - shutter_frames.front();
+    }
     usg::StageRef stage;
     if (geo) {
-#if kDDImageVersionInteger >= 161000
       /* The sample times are frames, like the time codes of the stage. */
-      GeometryProviderI::BuildStage(
-          stage, usg::ArgSet(), OpGraphLocation(geo), fdk::TimeValueSet{frame});
+      fdk::TimeValueSet times{frame};
+      times.insert(shutter_frames.begin(), shutter_frames.end());
+#if kDDImageVersionInteger >= 161000
+      GeometryProviderI::BuildStage(stage, usg::ArgSet(), OpGraphLocation(geo), times);
 #else
-      GeomOp::buildStage(stage, usg::ArgSet(), geo);
+      if (shutter_geos.empty()) {
+        GeomOp::buildStage(stage, usg::ArgSet(), geo);
+      }
+      else {
+        /* shortcut: the engines sample the shutter open and close only (a straight blur),
+         * also when asked for the frames between. */
+        GeomOp::buildStage(
+            stage, usg::ArgSet(), GeomOpSet(shutter_geos.begin(), shutter_geos.end()), &times);
+      }
 #endif
     }
     if (!geo) {
@@ -666,6 +709,10 @@ class CyclesRender : public PlanarIop {
       options.depth_of_field = _depth_of_field;
       options.camera = _camera;
       options.frame = frame;
+      if (shutter > 0.0) {
+        options.shutter = shutter;
+        options.motion_steps = int(shutter_frames.size());
+      }
       options.passes = passes;
       std::set<Op *> visited;
       collect_attributes(geo, visited, options);
@@ -777,6 +824,8 @@ class CyclesRender : public PlanarIop {
   int _device = 0;
   bool _denoise = true;
   bool _depth_of_field = false;
+  int _shutter_steps = 0;
+  ShutterControls _shutter;
   Channel _depth_channel[1] = {Chan_Z};
   Channel _normal_channel[3] = {Chan_Black, Chan_Black, Chan_Black};
   Channel _position_channel[3] = {Chan_Black, Chan_Black, Chan_Black};

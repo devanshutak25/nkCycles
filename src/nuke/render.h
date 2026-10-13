@@ -69,6 +69,10 @@ struct RenderOptions {
   /* Camera prim path, empty for the first camera in the stage. */
   std::string camera;
   double frame = 0.0;
+  /* Motion blur: shutter length in frames, centered on the frame, and the odd number of motion
+   * steps (1 without motion blur). */
+  double shutter = 0.0;
+  int motion_steps = 1;
   std::vector<PassRequest> passes;
   std::vector<AttributeValue> attributes;
   /* By the prim path of the camera node. */
