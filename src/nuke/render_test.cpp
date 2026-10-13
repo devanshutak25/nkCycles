@@ -251,13 +251,14 @@ int main(int argc, char **argv)
     }
     else if (arg == "--attribute") {
       const std::string text = value();
-      const size_t last = text.rfind(':'), middle = text.rfind(':', last - 1);
-      if (last == std::string::npos || middle == std::string::npos) {
+      /* Prim paths have no ':', attribute names can ("inputs:intensity"). */
+      const size_t first = text.find(':'), last = text.rfind(':');
+      if (first == std::string::npos || last == first) {
         fprintf(stderr, "Attribute must be prim:attribute:values\n");
         return 2;
       }
       nkcycles::AttributeValue attribute{
-          text.substr(0, middle), text.substr(middle + 1, last - middle - 1), {}};
+          text.substr(0, first), text.substr(first + 1, last - first - 1), {}};
       for (const std::string &number : split(text.substr(last + 1), ',')) {
         attribute.value.push_back(std::stod(number));
       }
