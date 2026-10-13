@@ -33,10 +33,15 @@ if(WIN32)
   # Embree, OSL and SYCL ones are only in the list when those are enabled.
   # TBB and the MSVC runtime are Nuke's.
   set(_nuke_runtime_libs ${PLATFORM_BUNDLED_LIBRARIES_RELEASE})
-  list(FILTER _nuke_runtime_libs INCLUDE REGEX
-    "/(OpenImageIO|OpenImageIO_Util|OpenEXR|OpenEXRCore|Iex|IlmThread|[Ii]math|OpenColorIO_[0-9_]+|openvdb|epoxy-0|OpenImageDenoise|OpenImageDenoise_core|OpenImageDenoise_device_(cpu|cuda)|boost_thread-vc[0-9]+-mt-x64-[0-9_]+|embree4|osl(comp|exec|noise|query)|sycl[0-9]+|pi_[a-z0-9_]+|ur_[a-z0-9_]+)[.]dll$")
+  set(_nuke_runtime_names "OpenImageIO|OpenImageIO_Util|OpenEXR|OpenEXRCore|Iex|IlmThread|[Ii]math|OpenColorIO_[0-9_]+|openvdb|epoxy-0|OpenImageDenoise|OpenImageDenoise_core|OpenImageDenoise_device_(cpu|cuda)|boost_thread-vc[0-9]+-mt-x64-[0-9_]+|embree4|osl(comp|exec|noise|query)")
+  if(EMBREE_SYCL_SUPPORT)
+    # The shared Embree with SYCL support imports the SYCL runtime.
+    string(APPEND _nuke_runtime_names "|sycl[0-9]+|pi_[a-z0-9_]+|ur_[a-z0-9_]+")
+  endif()
+  list(FILTER _nuke_runtime_libs INCLUDE REGEX "/(${_nuke_runtime_names})[.]dll$")
   install(FILES ${_nuke_runtime_libs} DESTINATION ${CYCLES_INSTALL_PATH})
   unset(_nuke_runtime_libs)
+  unset(_nuke_runtime_names)
 
   # Bundled libraries that Nuke loads too, in another version. Shared on purpose: TBB (USD and
   # Cycles must use Nuke's scheduler) and the MSVC runtime.
