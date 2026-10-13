@@ -142,8 +142,9 @@ void HdCyclesMesh::Populate(HdSceneDelegate *sceneDelegate, HdDirtyBits dirtyBit
     PopulatePoints(sceneDelegate);
   }
 
-  // Must happen after topology update, so that normals attribute size can be calculated
-  if (dirtyBits & HdChangeTracker::DirtyNormals) {
+  // Must happen after topology update, so that normals attribute size can be calculated.
+  // Also after moved points: Cycles computes missing normals (with their motion) again.
+  if (dirtyBits & (HdChangeTracker::DirtyNormals | HdChangeTracker::DirtyPoints)) {
     PopulateNormals(sceneDelegate);
   }
 
@@ -155,7 +156,9 @@ void HdCyclesMesh::Populate(HdSceneDelegate *sceneDelegate, HdDirtyBits dirtyBit
   rebuild = (_geom->triangles_is_modified()) || (_geom->subd_start_corner_is_modified()) ||
             (_geom->subd_num_corners_is_modified()) || (_geom->subd_shader_is_modified()) ||
             (_geom->subd_smooth_is_modified()) || (_geom->subd_ptex_offset_is_modified()) ||
-            (_geom->subd_face_corners_is_modified());
+            (_geom->subd_face_corners_is_modified()) ||
+            /* A refit BVH keeps the motion steps it was built with. */
+            (_geom->use_motion_blur_is_modified()) || (_geom->motion_steps_is_modified());
 }
 
 void HdCyclesMesh::PopulatePoints(HdSceneDelegate *sceneDelegate)
@@ -170,18 +173,38 @@ void HdCyclesMesh::PopulatePoints(HdSceneDelegate *sceneDelegate)
     return;
   }
 
-  /* Points of the motion steps, when they move over the shutter. */
+  /* Points of the motion steps, when they move over the shutter.
+   * shortcut: points that change in number over the shutter do not move. The authored samples
+   * are checked first, interpolating samples of different sizes reads out of bounds. */
   const HdCyclesSession *session = static_cast<const HdCyclesSession *>(
       sceneDelegate->GetRenderIndex().GetRenderDelegate()->GetRenderParam());
-  std::vector<VtValue> steps = SampleMotion<VtValue>(
-      pointsDs, session->motion_times, [&](const float time) { return pointsDs->GetValue(time); });
+  const std::vector<float> &times = session->motion_times;
   const size_t numPoints = _topology.GetNumPoints();
-  for (const VtValue &step : steps) {
-    if (!step.IsHolding<VtVec3fArray>() || step.UncheckedGet<VtVec3fArray>().size() < numPoints) {
-      /* shortcut: points that change in number over the shutter do not move. */
-      steps = {steps[steps.size() / 2]};
-      break;
+  auto pointCount = [](const VtValue &value) {
+    return value.IsHolding<VtVec3fArray>() ? value.UncheckedGet<VtVec3fArray>().size() : 0;
+  };
+  std::vector<VtValue> steps;
+  if (times.size() > 1) {
+    const size_t centerCount = pointCount(pointsDs->GetValue(0.0f));
+    std::vector<float> sampleTimes;
+    pointsDs->GetContributingSampleTimesForInterval(times.front(), times.back(), &sampleTimes);
+    bool sameCount = centerCount >= numPoints;
+    for (const float time : sampleTimes) {
+      sameCount = sameCount && pointCount(pointsDs->GetValue(time)) == centerCount;
     }
+    if (sameCount) {
+      steps = SampleMotion<VtValue>(
+          pointsDs, times, [&](const float time) { return pointsDs->GetValue(time); });
+      for (const VtValue &step : steps) {
+        sameCount = sameCount && pointCount(step) == centerCount;
+      }
+      if (!sameCount) {
+        steps.clear();
+      }
+    }
+  }
+  if (steps.empty()) {
+    steps = {pointsDs->GetValue(0.0f)};
   }
   const VtValue &value = steps[steps.size() / 2];
 
