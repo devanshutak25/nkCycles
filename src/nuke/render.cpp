@@ -35,6 +35,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <set>
 
@@ -55,7 +56,8 @@ class BufferOutputDriver : public OutputDriver {
 
   void write_render_tile(const Tile &tile) override
   {
-    /* Only the full image, no intermediate tiles. */
+    /* Only the full image, no intermediate tiles. Tiled renders give the full image when
+     * reading back the tiles from disk. */
     if (!(tile.size == tile.full_size)) {
       return;
     }
@@ -211,6 +213,8 @@ std::string render(const std::string &usd_text, const RenderOptions &options, Re
   SessionParams session_params = HD_CYCLES_NS::GetSessionParams(settings);
   session_params.background = true;
   session_params.samples = options.samples;
+  /* Big images are rendered in tiles written to disk, then read back as one image. */
+  session_params.temp_dir = std::filesystem::temp_directory_path().string();
 
   /* shortcut: a new session (device, kernels, scene) per render, keep one per node for faster
    * re-renders. */
@@ -221,6 +225,10 @@ std::string render(const std::string &usd_text, const RenderOptions &options, Re
       session->progress.set_cancel("Cancelled");
     }
   });
+  std::vector<string> tile_files;
+  session->full_buffer_written_cb = [&](string_view filename) {
+    tile_files.emplace_back(filename);
+  };
 
   /* Image size first, the camera window is conformed to it when the scene is read. */
   Scene *scene = session->scene.get();
@@ -280,6 +288,13 @@ std::string render(const std::string &usd_text, const RenderOptions &options, Re
   session->reset(session_params, buffer_params);
   session->start();
   session->wait();
+
+  for (const string &filename : tile_files) {
+    if (!session->progress.get_cancel()) {
+      session->process_full_buffer_from_disk(filename);
+    }
+    path_remove(filename);
+  }
 
   if (session->progress.get_cancel()) {
     result = RenderResult();
