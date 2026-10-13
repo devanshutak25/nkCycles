@@ -68,6 +68,8 @@ struct RenderOptions {
   bool depth_of_field = false;
   /* Camera prim path, empty for the first camera in the stage. */
   std::string camera;
+  /* Prim paths of holdout objects, with their descendants. */
+  std::vector<std::string> holdouts;
   double frame = 0.0;
   /* Motion blur: shutter length in frames, centered on the frame, and the odd number of motion
    * steps (1 without motion blur). */

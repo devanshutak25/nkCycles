@@ -31,6 +31,7 @@
 #include <memory>
 #include <mutex>
 #include <set>
+#include <sstream>
 #include <string_view>
 
 #ifdef _WIN32
@@ -233,6 +234,17 @@ void fix_array_types(std::string &text)
   }
 }
 
+/* Prim paths separated by white space. */
+std::vector<std::string> split_paths(const std::string &text)
+{
+  std::vector<std::string> paths;
+  std::istringstream stream(text);
+  for (std::string path; stream >> path;) {
+    paths.push_back(path);
+  }
+  return paths;
+}
+
 /* Path of the USD light or camera prim of a Nuke light or camera, empty for other ops. */
 std::string light_or_camera_prim(Op *op)
 {
@@ -331,6 +343,10 @@ class CyclesRender : public PlanarIop {
     Format_knob(f, &_formats, "format");
     String_knob(f, &_camera, "camera", "camera");
     Tooltip(f, "Camera prim path, as shown in the Scene Graph. Empty uses the first camera.");
+    String_knob(f, &_holdout, "holdout", "holdout");
+    Tooltip(f,
+            "Prim paths, separated by spaces, of objects cut out of the render: they hide what "
+            "is behind them, with alpha 0, but still cast shadows and show in reflections.");
     Int_knob(f, &_samples, "samples");
     SetRange(f, 1, 4096);
     Enumeration_knob(f, &_device, kDevices, "device");
@@ -708,6 +724,7 @@ class CyclesRender : public PlanarIop {
       options.denoise = _denoise;
       options.depth_of_field = _depth_of_field;
       options.camera = _camera;
+      options.holdouts = split_paths(_holdout);
       options.frame = frame;
       if (shutter > 0.0) {
         options.shutter = shutter;
@@ -820,6 +837,7 @@ class CyclesRender : public PlanarIop {
 
   FormatPair _formats;
   std::string _camera;
+  std::string _holdout;
   int _samples = 64;
   int _device = 0;
   bool _denoise = true;

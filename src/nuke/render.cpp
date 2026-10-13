@@ -40,6 +40,7 @@
 #include <pxr/usd/usdGeom/camera.h>
 #include <pxr/usd/usdGeom/gprim.h>
 #include <pxr/usd/usdGeom/metrics.h>
+#include <pxr/usd/usdGeom/primvarsAPI.h>
 #include <pxr/usd/usdGeom/tokens.h>
 
 #include <OpenImageIO/filesystem.h>
@@ -425,6 +426,23 @@ std::string render(const std::string &usd_text, const RenderOptions &options, Re
   const double meters_per_unit = UsdGeomGetStageMetersPerUnit(stage);
   for (const AttributeValue &value : options.attributes) {
     set_attribute(stage, value);
+  }
+  /* Holdouts: the object setting the Hydra delegate reads from a primvar. */
+  for (const std::string &path : options.holdouts) {
+    const UsdPrim root = SdfPath::IsValidPathString(path) ? stage->GetPrimAtPath(SdfPath(path)) :
+                                                            UsdPrim();
+    if (!root) {
+      continue;
+    }
+    for (const UsdPrim &prim : UsdPrimRange(root)) {
+      if (prim.IsA<UsdGeomGprim>()) {
+        UsdGeomPrimvarsAPI(prim)
+            .CreatePrimvar(TfToken("cycles:object:use_holdout"),
+                           SdfValueTypeNames->Bool,
+                           UsdGeomTokens->constant)
+            .Set(true);
+      }
+    }
   }
   /* Motion blur: the motion steps evenly over the shutter, in time codes around the frame. */
   std::vector<float> motion_times;
