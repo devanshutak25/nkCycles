@@ -158,6 +158,7 @@ TF_DEFINE_PRIVATE_TOKENS(CyclesMaterialTokens,
     (UsdPrimvarReader_float4)
     (UsdPrimvarReader_int)
     (UsdTransform2d)
+    (NukeDefaultSurface)
     (a)
     (rgb)
     (r)
@@ -291,6 +292,12 @@ class UsdToCycles {
       }};
   const UsdToCyclesMapping UsdPrimvarReader = {"attribute",
                                                {{TfToken("varname"), ustring("attribute")}}};
+  /* Surface Nuke gives to an image used as material, lit by the scene lights. */
+  const UsdToCyclesMapping NukeDefaultSurface = {"principled_bsdf",
+                                                 {
+                                                     {TfToken("tex_color"), ustring("base_color")},
+                                                     {TfToken("tex_opacity"), ustring("alpha")},
+                                                 }};
 
  public:
   const UsdToCyclesMapping *findUsd(const TfToken &usdNodeType)
@@ -300,6 +307,9 @@ class UsdToCycles {
     }
     if (usdNodeType == CyclesMaterialTokens->UsdUVTexture) {
       return &UsdUVTexture;
+    }
+    if (usdNodeType == CyclesMaterialTokens->NukeDefaultSurface) {
+      return &NukeDefaultSurface;
     }
     if (usdNodeType == CyclesMaterialTokens->UsdPrimvarReader_float ||
         usdNodeType == CyclesMaterialTokens->UsdPrimvarReader_float2 ||
@@ -495,6 +505,26 @@ void HdCyclesMaterial::Sync(HdSceneDelegate *sceneDelegate,
   *dirtyBits = DirtyBits::Clean;
 }
 
+/* An UsdTransform2d that does not transform, like the ones Nuke authors for every texture. */
+static bool IsIdentityTransform2d(HdMaterialNodeSchema nodeSchema)
+{
+  HdMaterialNodeParameterContainerSchema params = nodeSchema.GetParameters();
+  for (const TfToken &paramName : params.GetNames()) {
+    auto valueDs = params.Get(paramName).GetValue();
+    const VtValue value = valueDs ? valueDs->GetValue(0.0f) : VtValue();
+    if ((paramName == "rotation" && value.IsHolding<float>() &&
+         value.UncheckedGet<float>() != 0) ||
+        (paramName == "scale" && value.IsHolding<GfVec2f>() &&
+         value.UncheckedGet<GfVec2f>() != GfVec2f(1.0f)) ||
+        (paramName == "translation" && value.IsHolding<GfVec2f>() &&
+         value.UncheckedGet<GfVec2f>() != GfVec2f(0.0f)))
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
 void HdCyclesMaterial::UpdateParameters(NodeDesc &nodeDesc,
                                         HdMaterialNodeParameterContainerSchema params,
                                         const SdfPath &nodePath)
@@ -615,14 +645,26 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
     }
 
     HdMaterialConnectionSchema connSchema = connVec.GetElement(0);
-    const SdfPath upstreamNodePath =
-        connSchema.GetUpstreamNodePath() ?
-            MaterialNodeNameToSdfPath(connSchema.GetUpstreamNodePath()->GetTypedValue(0.0f)) :
-            SdfPath();
-    const TfToken upstreamOutputName = connSchema.GetUpstreamNodeOutputName() ?
-                                           connSchema.GetUpstreamNodeOutputName()->GetTypedValue(
-                                               0.0f) :
-                                           TfToken();
+    SdfPath upstreamNodePath = connSchema.GetUpstreamNodePath() ?
+                                   MaterialNodeNameToSdfPath(
+                                       connSchema.GetUpstreamNodePath()->GetTypedValue(0.0f)) :
+                                   SdfPath();
+    TfToken upstreamOutputName = connSchema.GetUpstreamNodeOutputName() ?
+                                     connSchema.GetUpstreamNodeOutputName()->GetTypedValue(0.0f) :
+                                     TfToken();
+
+    /* Connect from the input of pass-through nodes. */
+    for (auto it = _passThrough.find(upstreamNodePath); it != _passThrough.end();
+         it = _passThrough.find(upstreamNodePath))
+    {
+      std::tie(upstreamNodePath, upstreamOutputName) = it->second;
+      if (upstreamNodePath.IsEmpty()) {
+        break;
+      }
+    }
+    if (upstreamNodePath.IsEmpty()) {
+      continue;
+    }
 
     const auto srcNodeIt = _nodes.find(upstreamNodePath);
     if (srcNodeIt == _nodes.end()) {
@@ -659,6 +701,7 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
 unique_ptr<ShaderGraph> HdCyclesMaterial::BuildShaderGraph(HdMaterialNetworkSchema network)
 {
   _nodes.clear();
+  _passThrough.clear();
 
   unique_ptr<ShaderGraph> graph = make_unique<ShaderGraph>();
 
@@ -684,6 +727,26 @@ unique_ptr<ShaderGraph> HdCyclesMaterial::BuildShaderGraph(HdMaterialNetworkSche
                                           nodeSchema.GetNodeIdentifier()->GetTypedValue(0.0f) :
                                           TfToken();
       const std::string &nodeTypeId = nodeTypeIdToken.GetString();
+
+      /* Leave out an UsdTransform2d that does not transform, connecting from its input. */
+      if (nodeTypeIdToken == CyclesMaterialTokens->UsdTransform2d &&
+          IsIdentityTransform2d(nodeSchema))
+      {
+        auto &source = _passThrough[nodePath];
+        HdMaterialConnectionVectorContainerSchema conns = nodeSchema.GetInputConnections();
+        HdMaterialConnectionVectorSchema connVec = conns.Get(TfToken("in"));
+        if (connVec.GetNumElements() > 0) {
+          HdMaterialConnectionSchema connSchema = connVec.GetElement(0);
+          if (connSchema.GetUpstreamNodePath()) {
+            source.first = MaterialNodeNameToSdfPath(
+                connSchema.GetUpstreamNodePath()->GetTypedValue(0.0f));
+          }
+          if (connSchema.GetUpstreamNodeOutputName()) {
+            source.second = connSchema.GetUpstreamNodeOutputName()->GetTypedValue(0.0f);
+          }
+        }
+        continue;
+      }
 
       ustring cyclesType(nodeTypeId);
       const bool isNativeNode = nodeTypeId.starts_with("cycles_") ||
@@ -729,7 +792,9 @@ unique_ptr<ShaderGraph> HdCyclesMaterial::BuildShaderGraph(HdMaterialNetworkSche
 
     const auto nodeIt = _nodes.find(nodePath);
     if (nodeIt == _nodes.end()) {
-      TF_RUNTIME_ERROR("Could not find node '%s' to connect", nodePath.GetText());
+      if (_passThrough.find(nodePath) == _passThrough.end()) {
+        TF_RUNTIME_ERROR("Could not find node '%s' to connect", nodePath.GetText());
+      }
       continue;
     }
 

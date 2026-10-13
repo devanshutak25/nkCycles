@@ -55,6 +55,11 @@ class HdCyclesMaterial final : public PXR_NS::HdMaterial {
 
   CCL_NS::Shader *_shader = nullptr;
   std::unordered_map<PXR_NS::SdfPath, NodeDesc, PXR_NS::SdfPath::Hash> _nodes;
+  /* Nodes left out of the graph that pass their input through, with the source of that input. */
+  std::unordered_map<PXR_NS::SdfPath,
+                     std::pair<PXR_NS::SdfPath, PXR_NS::TfToken>,
+                     PXR_NS::SdfPath::Hash>
+      _passThrough;
 };
 
 HDCYCLES_NAMESPACE_CLOSE_SCOPE
