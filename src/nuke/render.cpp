@@ -516,7 +516,7 @@ std::map<std::string, std::string> cryptomatte_metadata(const std::string &usd_t
     materials = synced_names.materials;
   }
   materials.insert({"default_surface", "default_volume"});
-  for (const UsdPrim &prim : stage->Traverse()) {
+  for (const UsdPrim &prim : stage->Traverse(UsdTraverseInstanceProxies())) {
     if (prim.IsA<UsdGeomGprim>()) {
       objects.insert(prim.GetPath().GetString());
       assets.insert(prim.GetPath().GetParentPath().GetString());
