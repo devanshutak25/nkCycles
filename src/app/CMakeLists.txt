@@ -68,7 +68,8 @@ endif()
 
 # Application build targets
 
-if(WITH_CYCLES_STANDALONE)
+# The standalone application can not run outside Nuke, it uses Nuke's USD libraries.
+if(WITH_CYCLES_STANDALONE AND NOT NUKE_FOUND)
   set(SRC
     cycles_standalone.cpp
     cycles_xml.cpp

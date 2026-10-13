@@ -29,9 +29,17 @@ delayed_install("" $<TARGET_FILE:CyclesRender> ${CYCLES_INSTALL_PATH})
 delayed_install(${CMAKE_CURRENT_SOURCE_DIR} "init.py;menu.py" ${CYCLES_INSTALL_PATH})
 
 if(WIN32)
+  # Bundled libraries the node imports, and the OpenImageDenoise device modules loaded at runtime.
+  # TBB and the MSVC runtime are Nuke's.
+  set(_nuke_runtime_libs ${PLATFORM_BUNDLED_LIBRARIES_RELEASE})
+  list(FILTER _nuke_runtime_libs INCLUDE REGEX
+    "/(OpenImageIO|OpenImageIO_Util|OpenEXR|OpenEXRCore|Iex|IlmThread|[Ii]math|OpenColorIO_[0-9_]+|openvdb|epoxy-0|OpenImageDenoise|OpenImageDenoise_core|OpenImageDenoise_device_(cpu|cuda)|boost_thread-vc[0-9]+-mt-x64-[0-9_]+)[.]dll$")
+  install(FILES ${_nuke_runtime_libs} DESTINATION ${CYCLES_INSTALL_PATH})
+  unset(_nuke_runtime_libs)
+
   # Bundled libraries that Nuke loads too, in another version. Shared on purpose: TBB (USD and
   # Cycles must use Nuke's scheduler) and the MSVC runtime.
-  set(_nuke_private_dlls Iex.dll IlmThread.dll Imath.dll OpenEXR.dll OpenEXRCore.dll OpenEXRUtil.dll)
+  set(_nuke_private_dlls Iex.dll IlmThread.dll Imath.dll OpenEXR.dll OpenEXRCore.dll)
   install(CODE "
     execute_process(
       COMMAND \"${NUKE_ROOT}/python.exe\" -I \"${CMAKE_CURRENT_SOURCE_DIR}/rename_dlls.py\"

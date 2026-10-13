@@ -148,7 +148,8 @@ target_link_libraries(cycles_hydra
   ${LIB}
 )
 
-if(WITH_CYCLES_HYDRA_RENDER_DELEGATE)
+# Nuke uses the Hydra code through its render node, not as render delegate plugin.
+if(WITH_CYCLES_HYDRA_RENDER_DELEGATE AND NOT NUKE_FOUND)
   set(SRC_HD_CYCLES_PLUGIN
     plugin.h
     plugin.cpp
