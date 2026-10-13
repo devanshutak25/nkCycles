@@ -34,6 +34,8 @@ struct AttributeValue {
   std::vector<double> value;
   /* Value of an asset attribute. */
   std::string asset;
+  /* Set even when the stage has a value. */
+  bool force = false;
 };
 
 /* A Nuke image used as texture. */
@@ -51,6 +53,8 @@ struct RenderOptions {
   /* Cycles device: AUTO, OPTIX, CUDA or CPU. */
   std::string device = "AUTO";
   bool denoise = true;
+  /* Off: no depth of field, whatever the camera's f-stop. */
+  bool depth_of_field = false;
   /* Camera prim path, empty for the first camera in the stage. */
   std::string camera;
   double frame = 0.0;

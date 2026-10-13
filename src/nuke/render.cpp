@@ -223,8 +223,12 @@ void set_attribute(const UsdStageRefPtr &stage, const AttributeValue &value)
       }
     }
   }
-  if (!attr || attr.HasAuthoredValue()) {
+  if (!attr || (attr.HasAuthoredValue() && !value.force)) {
     return;
+  }
+  if (value.force) {
+    /* Time samples would win over the value set below. */
+    attr.Clear();
   }
   const std::vector<double> &v = value.value;
   const SdfValueTypeName type = attr.GetTypeName();
@@ -407,6 +411,10 @@ std::string render(const std::string &usd_text, const RenderOptions &options, Re
                             CameraUtilMatchHorizontally))
   {
     return options.camera.empty() ? "No camera in the scene" : "No camera at " + options.camera;
+  }
+  /* Each sync applies the camera again, so this lasts for this render only. */
+  if (!options.depth_of_field) {
+    scene->camera->set_aperturesize(0.0f);
   }
   scene->integrator->set_use_denoise(options.denoise);
   /* The session only raises the samples, but their count sets up the sampling pattern. */

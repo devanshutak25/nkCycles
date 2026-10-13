@@ -529,8 +529,26 @@ class CyclesRender : public PlanarIop {
                             {near_knob->get_value_at(op->outputContext()),
                              far_knob->get_value_at(op->outputContext())}});
         }
-        if (_depth_of_field) {
+        /* Nuke's lens is in millimeters, USD's in tenths of a scene unit: scale the f-stop so
+         * the aperture is the one of the millimeter lens (Nuke 16.1+ authors the f-stop). */
+        Knob *fstop_knob = op->knob("fstop");
+        if (_depth_of_field && fstop_knob) {
+          double lens_scale = 100.0;
+#if kDDImageVersionInteger >= 161000
+          /* Scene units per meter, 100 for centimeters. */
+          if (Knob *world_to_meters = op->knob("world_to_meters")) {
+            const double units_per_meter = world_to_meters->get_value_at(op->outputContext());
+            if (units_per_meter > 0.0) {
+              lens_scale /= units_per_meter;
+            }
+          }
+#endif
           add_knob_values(op, {"focal_point", "focusDistance", 1}, prim, values);
+          values.push_back({prim,
+                            "fStop",
+                            {fstop_knob->get_value_at(op->outputContext()) * lens_scale},
+                            {},
+                            true});
         }
       }
     }
@@ -582,6 +600,7 @@ class CyclesRender : public PlanarIop {
       options.samples = _samples;
       options.device = kDevices[_device];
       options.denoise = _denoise;
+      options.depth_of_field = _depth_of_field;
       options.camera = _camera;
       options.frame = frame;
       options.passes = passes;

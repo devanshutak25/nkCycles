@@ -33,7 +33,10 @@ The node is in *3D > CyclesRender*.
   (TransDir + TransInd) * TransCol + VolumeDir + VolumeInd + Emit + Env`.
   The cryptomatte toggles add `CryptoObject00`, ... layers with their metadata, for Nuke's
   Cryptomatte node.
-- **Depth of field** uses the camera's focal distance and f-stop when turned on.
+- **Depth of field** uses the camera's focal distance and f-stop when turned on, with the lens
+  in millimeters and the scene in meters (Nuke 17: in the units of the camera's *world to
+  meters*). Cameras of imported USD files use their own f-stop. When turned off there is none,
+  even if the scene has an f-stop.
 
 The render is kept for all layers of a frame, and the Cycles session between renders, so
 changing a light or a knob only updates what changed.
