@@ -456,11 +456,9 @@ void HdCyclesMaterial::Sync(HdSceneDelegate *sceneDelegate,
 
     const SceneLock lock(renderParam);
 
-    if (network && !_nodes.empty() && !dirtyResource) {
-      UpdateParameters(network);
-      _shader->tag_update(lock.scene);
-    }
-    else {
+    /* Always build a new graph: Cycles simplifies the graph of a shader when compiling it,
+     * deleting nodes, so the nodes of the last graph can not be updated in place. */
+    {
       unique_ptr<ShaderGraph> graph;
       if (!network) {
         TF_WARN("Could not get a material network for %s.", id.GetText());
@@ -612,22 +610,6 @@ void HdCyclesMaterial::UpdateParameters(NodeDesc &nodeDesc,
         nodeDesc.node->set(*input, u_colorspace_data);
       }
     }
-  }
-}
-
-void HdCyclesMaterial::UpdateParameters(HdMaterialNetworkSchema network)
-{
-  HdMaterialNodeContainerSchema nodes = network.GetNodes();
-  for (const TfToken &nodeName : nodes.GetNames()) {
-    const SdfPath nodePath = MaterialNodeNameToSdfPath(nodeName);
-
-    const auto nodeIt = _nodes.find(nodePath);
-    if (nodeIt == _nodes.end()) {
-      TF_RUNTIME_ERROR("Could not update parameters on missing node '%s'", nodePath.GetText());
-      continue;
-    }
-
-    UpdateParameters(nodeIt->second, nodes.Get(nodeName).GetParameters(), nodePath);
   }
 }
 

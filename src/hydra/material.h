@@ -45,8 +45,6 @@ class HdCyclesMaterial final : public PXR_NS::HdMaterial {
                         PXR_NS::HdMaterialNodeParameterContainerSchema params,
                         const PXR_NS::SdfPath &nodePath);
 
-  void UpdateParameters(PXR_NS::HdMaterialNetworkSchema network);
-
   void UpdateConnections(NodeDesc &nodeDesc,
                          PXR_NS::HdMaterialNodeSchema nodeSchema,
                          const PXR_NS::SdfPath &nodePath,
