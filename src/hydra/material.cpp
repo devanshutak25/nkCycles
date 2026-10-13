@@ -177,16 +177,27 @@ TF_DEFINE_PRIVATE_TOKENS(CyclesMaterialTokens,
  * equivalents. */
 class UsdToCyclesMapping {
   using ParamMap = std::unordered_map<TfToken, ustring, TfToken::HashFunctor>;
+  /* Values of Cycles inputs where the USD node's fallback differs from the Cycles default. */
+  using Defaults = std::vector<std::pair<ustring, VtValue>>;
 
  public:
-  UsdToCyclesMapping(const char *nodeType, ParamMap paramMap)
-      : _nodeType(nodeType), _paramMap(std::move(paramMap))
+  UsdToCyclesMapping(const char *nodeType, ParamMap paramMap, Defaults defaults = {})
+      : _nodeType(nodeType), _paramMap(std::move(paramMap)), _defaults(std::move(defaults))
   {
   }
 
   ustring nodeType() const
   {
     return _nodeType;
+  }
+
+  void applyDefaults(Node *node) const
+  {
+    for (const auto &[name, value] : _defaults) {
+      if (const SocketType *input = node->type->find_input(name)) {
+        SetNodeValue(node, *input, value);
+      }
+    }
   }
 
   bool hasParameterMapping(const TfToken &name) const
@@ -239,6 +250,7 @@ class UsdToCyclesMapping {
  private:
   const ustring _nodeType;
   ParamMap _paramMap;
+  Defaults _defaults;
 };
 
 class UsdToCyclesTexture : public UsdToCyclesMapping {
@@ -274,13 +286,20 @@ class UsdToCycles {
       "principled_bsdf",
       {
           {TfToken("diffuseColor"), ustring("base_color")},
-          {TfToken("emissiveColor"), ustring("emission")},
-          {TfToken("specularColor"), ustring("specular")},
+          {TfToken("emissiveColor"), ustring("emission_color")},
+          {TfToken("specularColor"), ustring("specular_tint")},
           {TfToken("clearcoatRoughness"), ustring("coat_roughness")},
           {TfToken("opacity"), ustring("alpha")},
           /* opacityThreshold */
           /* occlusion */
           /* displacement */
+      },
+      /* Fallbacks of UsdPreviewSurface inputs that are not authored. */
+      {
+          {ustring("base_color"), VtValue(GfVec3f(0.18f))},
+          {ustring("emission_color"), VtValue(GfVec3f(0.0f))},
+          {ustring("emission_strength"), VtValue(1.0f)},
+          {ustring("coat_roughness"), VtValue(0.01f)},
       }};
   const UsdToCyclesTexture UsdUVTexture = {
       "image_texture",
@@ -293,12 +312,16 @@ class UsdToCycles {
       }};
   const UsdToCyclesMapping UsdPrimvarReader = {"attribute",
                                                {{TfToken("varname"), ustring("attribute")}}};
-  /* Surface Nuke gives to an image used as material, lit by the scene lights. */
-  const UsdToCyclesMapping NukeDefaultSurface = {"principled_bsdf",
-                                                 {
-                                                     {TfToken("tex_color"), ustring("base_color")},
-                                                     {TfToken("tex_opacity"), ustring("alpha")},
-                                                 }};
+  /* Surface Nuke gives to an image used as material, lit by the scene lights: diffuse only. */
+  const UsdToCyclesMapping NukeDefaultSurface = {
+      "principled_bsdf",
+      {
+          {TfToken("tex_color"), ustring("base_color")},
+          {TfToken("tex_opacity"), ustring("alpha")},
+      },
+      {
+          {ustring("specular_ior_level"), VtValue(0.0f)},
+      }};
 
  public:
   const UsdToCyclesMapping *findUsd(const TfToken &usdNodeType)
@@ -846,6 +869,9 @@ unique_ptr<ShaderGraph> HdCyclesMaterial::BuildShaderGraph(HdMaterialNetworkSche
         /* Image nodes start with scene linear, detect the color space unless one is set. */
         if (const SocketType *colorspace = nodeType->find_input(ustring("colorspace"))) {
           nodeDesc.node->set(*colorspace, u_colorspace_auto);
+        }
+        if (nodeDesc.mapping) {
+          nodeDesc.mapping->applyDefaults(nodeDesc.node);
         }
         if (isNativeNode) {
           GetShaderNodeDefaults().Apply(nodeDesc.node, cyclesType.string());
