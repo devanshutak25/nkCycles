@@ -152,31 +152,60 @@ void add_knob_values(Op *op,
   values.push_back(value);
 }
 
-/* RGBA pixels of the format area of an image, with alpha 1 when the image has none. */
-std::shared_ptr<const nkcycles::Image> fetch_image(Iop *iop)
+/* A Cycles pass copied into Nuke channels. */
+struct PassOutput {
+  std::string pass;
+  int channels;
+  int component;
+  Channel channel;
+};
+
+/* A Nuke image used as texture. */
+struct Texture {
+  Iop *iop = nullptr;
+  /* Format area, the texture. */
+  Box box;
+  /* Part of it with pixels, the bounding box. */
+  Box fetch_box;
+};
+
+/* What a render needs from Nuke. Prepared by _validate on the main thread, since knobs,
+ * validate() and request() must not be used from render threads. */
+struct Prepared {
+  Hash key;
+  std::string error;
+  std::string usd_text;
+  nkcycles::RenderOptions options;
+  std::vector<PassOutput> outputs;
+  std::map<std::string, Texture> textures;
+  MetaData::Bundle metadata;
+};
+
+/* RGBA pixels of the format area of an image, repeating the edge pixels outside its bounding
+ * box, with alpha 1 when the image has none. The image is validated and requested by the node. */
+std::shared_ptr<const nkcycles::Image> fetch_image(const Texture &texture)
 {
-  iop->validate(true);
-  const Format &format = iop->format();
-  const Box box(format.x(), format.y(), format.r(), format.t());
-  if (box.w() <= 0 || box.h() <= 0) {
-    return nullptr;
-  }
-  iop->request(box, Mask_RGBA, 1);
-  ImagePlane plane(box, false, Mask_RGBA, 4);
-  iop->fetchPlane(plane);
-  if (iop->aborted()) {
-    return nullptr;
-  }
-  const bool has_alpha = iop->channels().contains(Chan_Alpha);
+  const Box &box = texture.box, &fetch = texture.fetch_box;
   auto image = std::make_shared<nkcycles::Image>();
   image->width = box.w();
   image->height = box.h();
-  image->pixels.resize(size_t(box.w()) * box.h() * 4);
+  image->pixels.resize(size_t(box.w()) * box.h() * 4, 0.0f);
+  if (fetch.w() <= 0 || fetch.h() <= 0) {
+    return image;
+  }
+  ImagePlane plane(fetch, false, Mask_RGBA, 4);
+  texture.iop->fetchPlane(plane);
+  if (texture.iop->aborted()) {
+    return nullptr;
+  }
+  const bool has_alpha = texture.iop->channels().contains(Chan_Alpha);
   float *pixel = image->pixels.data();
   for (int y = box.y(); y < box.t(); y++) {
     for (int x = box.x(); x < box.r(); x++) {
       for (int c = 0; c < 4; c++) {
-        *pixel++ = (c == 3 && !has_alpha) ? 1.0f : plane.at(x, y, Channel(Chan_Red + c));
+        *pixel++ = (c == 3 && !has_alpha) ?
+                       1.0f :
+                       plane.at(fetch.clampx(x), fetch.clampy(y), Channel(Chan_Red + c));
       }
     }
   }
@@ -267,6 +296,13 @@ class CyclesRender : public PlanarIop {
     Tooltip(f, "Number of overlapping IDs per pixel, two per layer.");
   }
 
+  /* The scene can animate without animated knobs, like an imported USD file. */
+  void append(Hash &hash) override
+  {
+    hash.append(outputContext().frame());
+    enableVaryingOutputHash();
+  }
+
   void _validate(bool for_real) override
   {
     if (_formats.format()) {
@@ -275,11 +311,23 @@ class CyclesRender : public PlanarIop {
     }
     info_.set(format());
 
-    _passes.clear();
-    _outputs.clear();
+    std::vector<nkcycles::PassRequest> passes;
+    std::vector<PassOutput> outputs;
     for (int i = 0; i < 4; i++) {
-      _outputs.push_back({"combined", 4, i, Channel(Chan_Red + i)});
+      outputs.push_back({"combined", 4, i, Channel(Chan_Red + i)});
     }
+    auto add_pass =
+        [&](const std::string &name, const char *type, const Channel *channels, int count) {
+          if (std::count(channels, channels + count, Chan_Black) == count) {
+            return;
+          }
+          passes.push_back({name, type, count});
+          for (int i = 0; i < count; i++) {
+            if (channels[i] != Chan_Black) {
+              outputs.push_back({name, count, i, channels[i]});
+            }
+          }
+        };
     add_pass("depth", "depth", _depth_channel, 1);
     add_pass("normal", "normal", _normal_channel, 3);
     add_pass("position", "position", _position_channel, 3);
@@ -310,21 +358,32 @@ class CyclesRender : public PlanarIop {
     }
 
     ChannelSet channels;
-    for (const Output &output : _outputs) {
+    for (const PassOutput &output : outputs) {
       channels += output.channel;
     }
     info_.channels(channels);
 
-    if (GeomOp *geo = op_cast<GeomOp *>(Op::input(0))) {
+    GeomOp *geo = op_cast<GeomOp *>(Op::input(0));
+    if (geo) {
       geo->validate(for_real);
+    }
+    if (for_real) {
+      prepare(geo, passes, outputs);
     }
   }
 
   void getRequests(const Box & /*box*/,
                    const ChannelSet & /*channels*/,
-                   int /*count*/,
-                   RequestOutput & /*request*/) const override
+                   int count,
+                   RequestOutput &request) const override
   {
+    if (const std::shared_ptr<const Prepared> prepared = current()) {
+      for (const auto &[path, texture] : prepared->textures) {
+        if (texture.fetch_box.w() > 0 && texture.fetch_box.h() > 0) {
+          request.request(texture.iop, texture.fetch_box, Mask_RGBA, count);
+        }
+      }
+    }
   }
 
   bool useStripes() const override
@@ -346,27 +405,29 @@ class CyclesRender : public PlanarIop {
       plane.fillChannel(z, 0.0f);
     }
 
-    if (!render_once()) {
-      if (!_error.empty() && !aborted()) {
-        error("Cycles: %s", _error.c_str());
+    const Render render = render_once();
+    if (!render.result) {
+      if (!render.error.empty() && !aborted()) {
+        error("Cycles: %s", render.error.c_str());
       }
       return;
     }
 
     /* Copy the bottom-up Cycles image into the plane, clipped to its bounds. */
-    const int width = format().width(), height = format().height();
+    const int width = render.prepared->options.width, height = render.prepared->options.height;
     const Box &bounds = plane.bounds();
     const int x0 = std::max(bounds.x(), 0), x1 = std::min(bounds.r(), width);
     const int y0 = std::max(bounds.y(), 0), y1 = std::min(bounds.t(), height);
+    const std::vector<PassOutput> &outputs = render.prepared->outputs;
     foreach(z, plane.channels())
     {
       const auto output = std::find_if(
-          _outputs.begin(), _outputs.end(), [&](const Output &o) { return o.channel == z; });
-      if (output == _outputs.end()) {
+          outputs.begin(), outputs.end(), [&](const PassOutput &o) { return o.channel == z; });
+      if (output == outputs.end()) {
         continue;
       }
-      const auto pixels = _result.passes.find(output->pass);
-      if (pixels == _result.passes.end()) {
+      const auto pixels = render.result->passes.find(output->pass);
+      if (pixels == render.result->passes.end()) {
         continue;
       }
       const int chan = plane.chanNo(z);
@@ -379,43 +440,28 @@ class CyclesRender : public PlanarIop {
     }
   }
 
-  /* Cryptomatte metadata, rendering the image when it was not yet. */
+  /* Cryptomatte metadata, made from the scene without rendering it. */
   const MetaData::Bundle &_fetchMetaData(const char * /*key*/) override
   {
-    _metadata = MetaData::Bundle();
-    if (std::find(_cryptomatte, _cryptomatte + 3, true) == _cryptomatte + 3) {
-      return _metadata;
-    }
     validate(true);
-    if (render_once()) {
-      for (const auto &[key, value] : _result.metadata) {
-        /* Keys as Nuke's Read gives them, Write writes them without "exr/". */
-        _metadata.setData("exr/" + key, value);
-      }
-    }
-    return _metadata;
+    const std::lock_guard<std::mutex> lock(_prepared_mutex);
+    /* Keep the returned bundle alive until the next call. */
+    _metadata_owner = _prepared;
+    return _prepared ? _prepared->metadata : _no_metadata;
   }
 
  private:
-  /* A Cycles pass copied into Nuke channels. */
-  struct Output {
-    std::string pass;
-    int channels;
-    int component;
-    Channel channel;
+  /* A finished render and what it was made from. */
+  struct Render {
+    std::shared_ptr<const Prepared> prepared;
+    std::shared_ptr<const nkcycles::RenderResult> result;
+    std::string error;
   };
 
-  void add_pass(const std::string &name, const char *type, const Channel *channels, int count)
+  std::shared_ptr<const Prepared> current() const
   {
-    if (std::count(channels, channels + count, Chan_Black) == count) {
-      return;
-    }
-    _passes.push_back({name, type, count});
-    for (int i = 0; i < count; i++) {
-      if (channels[i] != Chan_Black) {
-        _outputs.push_back({name, count, i, channels[i]});
-      }
-    }
+    const std::lock_guard<std::mutex> lock(_prepared_mutex);
+    return _prepared;
   }
 
   /* Values of the light and camera knobs Nuke does not write into the stage. */
@@ -434,7 +480,8 @@ class CyclesRender : public PlanarIop {
         }
         /* The image of an EnvironmentLight. */
         for (int i = 0; i < op->inputs(); i++) {
-          if (Iop *image = op->input(i) ? op->input(i)->iop() : nullptr) {
+          Iop *image = op->uses_input(i) > 0.0f && op->input(i) ? op->input(i)->iop() : nullptr;
+          if (image) {
             const std::string path = MaterialOpI::buildAssetPath(image);
             values.push_back({prim,
                               "inputs:texture:file",
@@ -457,108 +504,147 @@ class CyclesRender : public PlanarIop {
         }
       }
     }
+    /* Inputs not in use may be out of date. */
     for (int i = 0; i < op->inputs(); i++) {
-      collect_attributes(op->input(i), visited, values);
+      if (op->uses_input(i) > 0.0f) {
+        collect_attributes(op->input(i), visited, values);
+      }
     }
   }
 
-  /* Images of Nuke nodes the scene uses as textures, by asset path. The path has the hash of the
-   * node, so images of the last render are reused. */
-  std::map<std::string, std::shared_ptr<const nkcycles::Image>> fetch_images(
-      const std::string &usd_text, const std::vector<nkcycles::AttributeValue> &attributes)
+  /* Build the scene and gather what the render needs from Nuke, once per hash. */
+  void prepare(GeomOp *geo,
+               const std::vector<nkcycles::PassRequest> &passes,
+               const std::vector<PassOutput> &outputs)
   {
-    std::set<std::string> paths;
-    for (size_t start = usd_text.find("@nkop:"); start != std::string::npos;
-         start = usd_text.find("@nkop:", start + 1))
-    {
-      const size_t end = usd_text.find('@', start + 1);
-      if (end == std::string::npos) {
-        break;
-      }
-      paths.insert(usd_text.substr(start + 1, end - start - 1));
-    }
-    for (const nkcycles::AttributeValue &value : attributes) {
-      if (!value.asset.empty()) {
-        paths.insert(value.asset);
+    const Hash key = hash();
+    if (const std::shared_ptr<const Prepared> prepared = current()) {
+      if (prepared->key == key) {
+        return;
       }
     }
 
-    std::map<std::string, std::shared_ptr<const nkcycles::Image>> images;
-    for (const std::string &path : paths) {
-      const auto image = _images.find(path);
-      if (image != _images.end()) {
-        images[path] = image->second;
-        continue;
+    auto prepared = std::make_shared<Prepared>();
+    prepared->key = key;
+    prepared->outputs = outputs;
+    usg::StageRef stage;
+    if (geo) {
+      GeomOp::buildStage(stage, usg::ArgSet(), geo);
+    }
+    if (!geo) {
+      prepared->error = "No input scene";
+    }
+    else if (!stage || !stage->exportToString(prepared->usd_text, false)) {
+      prepared->error = "Failed to export the input scene";
+    }
+    else {
+      nkcycles::RenderOptions &options = prepared->options;
+      options.width = format().width();
+      options.height = format().height();
+      options.samples = _samples;
+      options.device = kDevices[_device];
+      options.denoise = _denoise;
+      options.camera = _camera;
+      options.frame = outputContext().frame();
+      options.passes = passes;
+      std::set<Op *> visited;
+      collect_attributes(geo, visited, options.attributes);
+
+      /* Images of Nuke nodes used as textures, by their asset path in the scene. */
+      std::set<std::string> paths;
+      const std::string &text = prepared->usd_text;
+      for (size_t start = text.find("@nkop:"); start != std::string::npos;
+           start = text.find("@nkop:", start + 1))
+      {
+        const size_t end = text.find('@', start + 1);
+        if (end == std::string::npos) {
+          break;
+        }
+        paths.insert(text.substr(start + 1, end - start - 1));
       }
-      Op *op = MaterialOpI::retrieveOpFromAssetPath(path);
-      if (Iop *iop = op ? op->iop() : nullptr) {
-        if (std::shared_ptr<const nkcycles::Image> pixels = fetch_image(iop)) {
-          images[path] = pixels;
+      for (const nkcycles::AttributeValue &value : options.attributes) {
+        if (!value.asset.empty()) {
+          paths.insert(value.asset);
+        }
+      }
+      for (const std::string &path : paths) {
+        Op *op = MaterialOpI::retrieveOpFromAssetPath(path);
+        Iop *iop = op ? op->iop() : nullptr;
+        if (!iop) {
+          continue;
+        }
+        iop->validate(true);
+        const Format &image_format = iop->format();
+        Texture texture;
+        texture.iop = iop;
+        texture.box = Box(image_format.x(), image_format.y(), image_format.r(), image_format.t());
+        texture.fetch_box = iop->info();
+        texture.fetch_box.intersect(texture.box);
+        if (texture.box.w() > 0 && texture.box.h() > 0) {
+          prepared->textures[path] = texture;
+        }
+      }
+
+      int cryptomatte_types = 0;
+      for (int i = 0; i < 3; i++) {
+        cryptomatte_types |= _cryptomatte[i] ? 1 << i : 0;
+      }
+      if (cryptomatte_types) {
+        for (const auto &[name, value] :
+             nkcycles::cryptomatte_metadata(prepared->usd_text, cryptomatte_types))
+        {
+          /* Keys as Nuke's Read gives them, Write writes them without "exr/". */
+          prepared->metadata.setData("exr/" + name, value);
         }
       }
     }
-    _images = images;
-    return images;
+
+    const std::lock_guard<std::mutex> lock(_prepared_mutex);
+    _prepared = prepared;
   }
 
-  /* Render all passes, once per hash. Returns false when there is no image. */
-  bool render_once()
+  /* Render all passes, once per hash. */
+  Render render_once()
   {
-    const std::lock_guard<std::mutex> lock(_render_mutex);
-    Hash key = hash();
-    key.append(outputContext().frame());
-    if (_rendered && _rendered_key == key) {
-      return _error.empty();
+    const std::shared_ptr<const Prepared> prepared = current();
+    if (!prepared) {
+      return {nullptr, nullptr, "Not validated"};
     }
-    _rendered = false;
-    _result = nkcycles::RenderResult();
-    _error.clear();
 
-    GeomOp *geo = op_cast<GeomOp *>(Op::input(0));
-    if (!geo) {
-      _error = "No input scene";
-      return false;
+    const std::lock_guard<std::mutex> lock(_render_mutex);
+    if (_render.prepared && _render.prepared->key == prepared->key) {
+      return _render;
+    }
+    if (!prepared->error.empty()) {
+      _render = {prepared, nullptr, prepared->error};
+      return _render;
     }
 
     static std::once_flag init_flag;
     std::call_once(init_flag, [] { nkcycles::init(plugin_directory()); });
 
-    usg::StageRef stage;
-    GeomOp::buildStage(stage, usg::ArgSet(), geo);
-    std::string usd_text;
-    if (!stage || !stage->exportToString(usd_text, false)) {
-      _error = "Failed to export the input scene";
-      _rendered = true;
-      _rendered_key = key;
-      return false;
+    /* The path has the hash of the node, so images of the last render are reused. */
+    nkcycles::RenderOptions options = prepared->options;
+    std::map<std::string, std::shared_ptr<const nkcycles::Image>> images;
+    for (const auto &[path, texture] : prepared->textures) {
+      const auto image = _images.find(path);
+      images[path] = image != _images.end() ? image->second : fetch_image(texture);
+      if (aborted()) {
+        return {};
+      }
     }
-
-    const Format &fmt = format();
-    nkcycles::RenderOptions options;
-    options.width = fmt.width();
-    options.height = fmt.height();
-    options.samples = _samples;
-    options.device = kDevices[_device];
-    options.denoise = _denoise;
-    options.camera = _camera;
-    options.frame = outputContext().frame();
-    options.passes = _passes;
-    std::set<Op *> visited;
-    collect_attributes(geo, visited, options.attributes);
-    options.images = fetch_images(usd_text, options.attributes);
-    if (aborted()) {
-      return false;
-    }
+    _images = images;
+    options.images = images;
     options.aborted = [this] { return aborted(); };
 
-    _error = nkcycles::render(usd_text, options, _result);
-    if (!_error.empty() && aborted()) {
+    auto result = std::make_shared<nkcycles::RenderResult>();
+    const std::string message = nkcycles::render(prepared->usd_text, options, *result);
+    if (!message.empty() && aborted()) {
       /* Render again next time. */
-      return false;
+      return {};
     }
-    _rendered = true;
-    _rendered_key = key;
-    return _error.empty();
+    _render = {prepared, message.empty() ? result : nullptr, message};
+    return _render;
   }
 
   FormatPair _formats;
@@ -575,16 +661,13 @@ class CyclesRender : public PlanarIop {
   bool _cryptomatte[3] = {};
   int _cryptomatte_levels = 6;
 
-  /* Set by _validate. */
-  std::vector<nkcycles::PassRequest> _passes;
-  std::vector<Output> _outputs;
+  mutable std::mutex _prepared_mutex;
+  std::shared_ptr<const Prepared> _prepared;
+  std::shared_ptr<const Prepared> _metadata_owner;
+  const MetaData::Bundle _no_metadata;
 
   std::mutex _render_mutex;
-  bool _rendered = false;
-  Hash _rendered_key;
-  nkcycles::RenderResult _result;
-  std::string _error;
-  MetaData::Bundle _metadata;
+  Render _render;
   std::map<std::string, std::shared_ptr<const nkcycles::Image>> _images;
 };
 

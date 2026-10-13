@@ -12,7 +12,6 @@
 #include "scene/image.h"
 #include "scene/image_loader.h"
 #include "scene/integrator.h"
-#include "scene/object.h"
 #include "scene/pass.h"
 #include "scene/scene.h"
 #include "scene/shader.h"
@@ -34,7 +33,9 @@
 #include <pxr/usd/sdf/layer.h>
 #include <pxr/usd/sdf/types.h>
 #include <pxr/usd/usd/attribute.h>
+#include <pxr/usd/usd/primRange.h>
 #include <pxr/usd/usd/stage.h>
+#include <pxr/usd/usdGeom/gprim.h>
 #include <pxr/usd/usdGeom/metrics.h>
 #include <pxr/usd/usdGeom/tokens.h>
 
@@ -201,32 +202,6 @@ void set_nuke_images(Scene *scene,
             make_unique<NukeImageLoader>(image->second.first, image->second.second), params);
       }
     }
-  }
-}
-
-void add_cryptomatte_metadata(Scene *scene, const int types, RenderResult &result)
-{
-  for (const auto &[layer, type] : kCryptomatteTypes) {
-    if (!(types & type)) {
-      continue;
-    }
-    std::set<string> names;
-    if (type == CRYPT_MATERIAL) {
-      for (const Shader *shader : scene->shaders) {
-        names.insert(shader->name.string());
-      }
-    }
-    else {
-      for (const Object *object : scene->objects) {
-        names.insert((type == CRYPT_OBJECT ? object->name : object->get_asset_name()).string());
-      }
-    }
-    const uint32_t hash = util_murmur_hash3(layer, strlen(layer), 0);
-    const string prefix = string_printf("cryptomatte/%08x", hash).substr(0, 19) + "/";
-    result.metadata[prefix + "name"] = layer;
-    result.metadata[prefix + "hash"] = "MurmurHash3_32";
-    result.metadata[prefix + "conversion"] = "uint32_to_float32";
-    result.metadata[prefix + "manifest"] = cryptomatte_manifest(names);
   }
 }
 
@@ -430,7 +405,6 @@ std::string render(const std::string &usd_text, const RenderOptions &options, Re
       return message;
     }
   }
-  const int cryptomatte_types = scene->film->get_cryptomatte_passes();
 
   session->progress.reset();
   session->set_output_driver(make_unique<BufferOutputDriver>(passes, result));
@@ -498,8 +472,44 @@ std::string render(const std::string &usd_text, const RenderOptions &options, Re
       }
     }
   }
-  add_cryptomatte_metadata(scene, cryptomatte_types, result);
   return "";
+}
+
+std::map<std::string, std::string> cryptomatte_metadata(const std::string &usd_text,
+                                                        const int types)
+{
+  std::map<std::string, std::string> metadata;
+  const SdfLayerRefPtr layer = SdfLayer::CreateAnonymous(".usda");
+  const UsdStageRefPtr stage = layer->ImportFromString(usd_text) ? UsdStage::Open(layer) :
+                                                                   UsdStageRefPtr();
+  if (!stage) {
+    return metadata;
+  }
+  /* Hydra names objects after their prim, assets after its parent, materials after their prim. */
+  std::set<string> objects, assets, materials;
+  for (const UsdPrim &prim : stage->Traverse()) {
+    if (prim.IsA<UsdGeomGprim>()) {
+      objects.insert(prim.GetPath().GetString());
+      assets.insert(prim.GetPath().GetParentPath().GetString());
+    }
+    else if (prim.GetTypeName() == "Material") {
+      materials.insert(prim.GetPath().GetString());
+    }
+  }
+  for (const auto &[layer_name, type] : kCryptomatteTypes) {
+    if (!(types & type)) {
+      continue;
+    }
+    const uint32_t hash = util_murmur_hash3(layer_name, strlen(layer_name), 0);
+    const string prefix = string_printf("cryptomatte/%08x", hash).substr(0, 19) + "/";
+    metadata[prefix + "name"] = layer_name;
+    metadata[prefix + "hash"] = "MurmurHash3_32";
+    metadata[prefix + "conversion"] = "uint32_to_float32";
+    metadata[prefix + "manifest"] = cryptomatte_manifest(type == CRYPT_OBJECT ? objects :
+                                                         type == CRYPT_ASSET  ? assets :
+                                                                                materials);
+  }
+  return metadata;
 }
 
 }  // namespace nkcycles

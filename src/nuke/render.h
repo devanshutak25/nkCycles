@@ -66,12 +66,15 @@ struct RenderResult {
   /* Pixels of "combined" (RGBA) and of each requested pass, width * height * channels, bottom
    * row first. Like Nuke, depth is 1/z (0 for the background) and position is in stage units. */
   std::map<std::string, std::vector<float>> passes;
-  /* Cryptomatte metadata of the specification: "cryptomatte/<id>/name", ".../manifest", ... */
-  std::map<std::string, std::string> metadata;
 };
 
 /* Directory holding the Cycles kernels ("lib" sub-folder). */
 void init(const std::string &root_path);
+
+/* Cryptomatte metadata of the specification ("cryptomatte/<id>/name", ".../manifest", ...) of a
+ * USD layer given as text, with the names the render uses. types: 1 object, 2 material, 4 asset.
+ * Does not render, so it is quick enough for Nuke's main thread. */
+std::map<std::string, std::string> cryptomatte_metadata(const std::string &usd_text, int types);
 
 /* Render a USD layer given as text. Returns an error message, or an empty string on success. */
 std::string render(const std::string &usd_text,
