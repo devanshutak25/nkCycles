@@ -578,21 +578,33 @@ static TfToken GetUpstreamNodeName(HdMaterialNodeSchema nodeSchema, const char *
 
 /* Texture coordinates of Nuke's Project3DTexture, a projection from the camera of a
  * NukeCameraOpInterface node, computed like Nuke does: clip = P * inverse(xform) * projection *
- * format_matrix (row vectors, P in scene units) and uv = clip.xy / clip.w, where w is the depth
- * in front of the camera. Points the camera does not project on get coordinates far outside the
- * image, which a texture with CLIP extension makes transparent black.
+ * format_matrix (row vectors, P in scene units) and uv = clip.xy / clip.w. Points the camera does
+ * not project on (behind it, outside its clipping planes, on faces it does not project on) get
+ * coordinates far outside the image, which a texture with CLIP extension makes transparent black.
  * shortcut: occlusion_mode (self or world shadowing of the projection) is not supported. */
-static ShaderOutput *BuildNukeProjection(ShaderGraph *graph,
-                                         HdMaterialNodeSchema projection,
-                                         HdMaterialNodeSchema camera,
-                                         const double metersPerUnit)
+struct NukeProjection {
+  ShaderOutput *coordinates;
+  /* 1 where the camera projects, else 0. */
+  ShaderOutput *visible;
+  /* Transparent outside the image, else its edge continues. */
+  bool crop;
+};
+
+static NukeProjection BuildNukeProjection(ShaderGraph *graph,
+                                          HdMaterialNodeSchema projection,
+                                          HdMaterialNodeSchema camera,
+                                          const double metersPerUnit)
 {
   const GfMatrix4d xform = GetNodeParameter(camera, "xform", GfMatrix4d(1.0));
+  const GfMatrix4d cameraProjection = GetNodeParameter(camera, "projection", GfMatrix4d(1.0));
   /* Nuke 17 renamed format_matrix. */
   const GfMatrix4d format = GetNodeParameter(
       projection, "format_matrix", GetNodeParameter(projection, "format_xform", GfMatrix4d(1.0)));
-  const GfMatrix4d clip = GfMatrix4d().SetScale(1.0 / metersPerUnit) * xform.GetInverse() *
-                          GetNodeParameter(camera, "projection", GfMatrix4d(1.0)) * format;
+  /* Cycles world space (meters) to camera space, and to clip space. */
+  const GfMatrix4d view = GfMatrix4d().SetScale(1.0 / metersPerUnit) * xform.GetInverse();
+  const GfMatrix4d clip = view * cameraProjection * format;
+  /* An orthographic projection keeps w at 1. */
+  const bool orthographic = cameraProjection[2][3] == 0.0;
   const bool crop = GetNodeParameter(projection, "crop_to_format", 1) != 0;
   const int facesMode = GetNodeParameter(projection, "faces_mode", 0);
 
@@ -608,37 +620,43 @@ static ShaderOutput *BuildNukeProjection(ShaderGraph *graph,
     }
     return node;
   };
+  auto vector = [](const double x, const double y, const double z) {
+    return make_float3(float(x), float(y), float(z));
+  };
 
   GeometryNode *geometry = graph->create_node<GeometryNode>();
   ShaderOutput *position = geometry->output("Position");
-  auto clipComponent = [&](const int j) {
+  /* Column j of P * matrix. */
+  auto component = [&](const GfMatrix4d &matrix, const int j) {
     VectorMathNode *dot = graph->create_node<VectorMathNode>();
     dot->set_math_type(NODE_VECTOR_MATH_DOT_PRODUCT);
-    dot->set_vector2(make_float3(float(clip[0][j]), float(clip[1][j]), float(clip[2][j])));
+    dot->set_vector2(vector(matrix[0][j], matrix[1][j], matrix[2][j]));
     graph->connect(position, dot->input("Vector1"));
-    return math(NODE_MATH_ADD, dot->output("Value"), nullptr, float(clip[3][j]))->output("Value");
+    return math(NODE_MATH_ADD, dot->output("Value"), nullptr, float(matrix[3][j]))
+        ->output("Value");
   };
-  ShaderOutput *x = clipComponent(0);
-  ShaderOutput *y = clipComponent(1);
-  ShaderOutput *w = clipComponent(3);
+  ShaderOutput *x = component(clip, 0);
+  ShaderOutput *y = component(clip, 1);
+  ShaderOutput *w = component(clip, 3);
   MathNode *u = math(NODE_MATH_DIVIDE, x, w, 0.0f);
   MathNode *v = math(NODE_MATH_DIVIDE, y, w, 0.0f);
   /* Without crop, the edge of the image continues outside it. */
   u->set_use_clamp(!crop);
   v->set_use_clamp(!crop);
 
-  /* Projected on: in front of the camera, between its clipping planes, on the faces it
-   * projects on. */
+  /* Depth in front of the camera, which looks down its -z axis. */
+  ShaderOutput *depth =
+      math(NODE_MATH_MULTIPLY, component(view, 2), nullptr, -1.0f)->output("Value");
   const bool nearClip = GetNodeParameter(projection, "near_clip_enable", 1) != 0;
   const bool farClip = GetNodeParameter(projection, "far_clip_enable", 1) != 0;
   ShaderOutput *visible = math(NODE_MATH_GREATER_THAN,
-                               w,
+                               depth,
                                nullptr,
                                nearClip ? GetNodeParameter(camera, "near_plane", 0.0f) : 0.0f)
                               ->output("Value");
   if (farClip) {
     ShaderOutput *beforeFar =
-        math(NODE_MATH_LESS_THAN, w, nullptr, GetNodeParameter(camera, "far_plane", FLT_MAX))
+        math(NODE_MATH_LESS_THAN, depth, nullptr, GetNodeParameter(camera, "far_plane", FLT_MAX))
             ->output("Value");
     visible = math(NODE_MATH_MULTIPLY, visible, beforeFar, 0.0f)->output("Value");
   }
@@ -650,16 +668,21 @@ static ShaderOutput *BuildNukeProjection(ShaderGraph *graph,
     normal->set_math_type(NODE_VECTOR_MATH_SCALE);
     graph->connect(geometry->output("True Normal"), normal->input("Vector1"));
     graph->connect(side->output("Value"), normal->input("Scale"));
-    VectorMathNode *toCamera = graph->create_node<VectorMathNode>();
-    toCamera->set_math_type(NODE_VECTOR_MATH_SUBTRACT);
-    const GfVec3d cameraPosition = xform.ExtractTranslation() * metersPerUnit;
-    toCamera->set_vector1(
-        make_float3(float(cameraPosition[0]), float(cameraPosition[1]), float(cameraPosition[2])));
-    graph->connect(position, toCamera->input("Vector2"));
     VectorMathNode *facing = graph->create_node<VectorMathNode>();
     facing->set_math_type(NODE_VECTOR_MATH_DOT_PRODUCT);
     graph->connect(normal->output("Vector"), facing->input("Vector1"));
-    graph->connect(toCamera->output("Vector"), facing->input("Vector2"));
+    if (orthographic) {
+      /* The camera's +z axis. */
+      facing->set_vector2(vector(xform[2][0], xform[2][1], xform[2][2]));
+    }
+    else {
+      VectorMathNode *toCamera = graph->create_node<VectorMathNode>();
+      toCamera->set_math_type(NODE_VECTOR_MATH_SUBTRACT);
+      const GfVec3d cameraPosition = xform.ExtractTranslation() * metersPerUnit;
+      toCamera->set_vector1(vector(cameraPosition[0], cameraPosition[1], cameraPosition[2]));
+      graph->connect(position, toCamera->input("Vector2"));
+      graph->connect(toCamera->output("Vector"), facing->input("Vector2"));
+    }
     ShaderOutput *onFace = math(facesMode == 1 ? NODE_MATH_GREATER_THAN : NODE_MATH_LESS_THAN,
                                 facing->output("Value"),
                                 nullptr,
@@ -679,7 +702,7 @@ static ShaderOutput *BuildNukeProjection(ShaderGraph *graph,
   CombineXYZNode *uv = graph->create_node<CombineXYZNode>();
   graph->connect(hiddenU->output("Value"), uv->input("X"));
   graph->connect(v->output("Value"), uv->input("Y"));
-  return uv->output("Vector");
+  return {uv->output("Vector"), visible, crop};
 }
 
 /* Nuke's surfaces and layer nodes, made of several Cycles nodes. Returns false for other nodes.
@@ -1048,7 +1071,7 @@ void HdCyclesMaterial::UpdateConnections(NodeDesc &nodeDesc,
     if (fromTexture && !normalMapColor) {
       const TextureScaleBias &scaleBias = _textureScaleBias[upstreamNodePath];
       ShaderNode *math;
-      if (output->name() == "Alpha") {
+      if (output->type() == SocketType::FLOAT) {
         MathNode *mathNode = shaderGraph->create_node<MathNode>();
         mathNode->set_math_type(NODE_MATH_MULTIPLY_ADD);
         shaderGraph->connect(output, mathNode->input("Value1"));
@@ -1207,25 +1230,48 @@ unique_ptr<ShaderGraph> HdCyclesMaterial::BuildShaderGraph(HdMaterialNetworkSche
   }
 
   /* A Nuke projection gives the outputs of the texture it projects, read with the coordinates
-   * of the projection. */
-  std::vector<std::pair<ShaderNode *, ShaderOutput *>> projectedTextures;
+   * of the projection, from a texture node of its own: the image may also be projected by other
+   * cameras, or used with its UVs. */
   for (const TfToken &nodeName : projections) {
     HdMaterialNodeSchema projection = nodes.Get(nodeName);
     const TfToken textureName = GetUpstreamNodeName(projection, "map_color");
     const TfToken cameraName = GetUpstreamNodeName(projection, "cam_xform");
-    const auto textureIt = _nodes.find(MaterialNodeNameToSdfPath(textureName));
+    const SdfPath texturePath = MaterialNodeNameToSdfPath(textureName);
+    const auto textureIt = _nodes.find(texturePath);
     if (textureIt == _nodes.end() || cameraName.IsEmpty() ||
         textureIt->second.node->type != ImageTextureNode::get_node_type())
     {
       TF_WARN("Projection '%s' has no texture or camera", nodeName.GetText());
       continue;
     }
-    const NodeDesc texture = textureIt->second;
-    static_cast<ImageTextureNode *>(texture.node)->set_extension(EXTENSION_CLIP);
-    projectedTextures.emplace_back(
-        texture.node,
-        BuildNukeProjection(graph.get(), projection, nodes.Get(cameraName), metersPerUnit));
-    _nodes[MaterialNodeNameToSdfPath(nodeName)] = texture;
+    ImageTextureNode *texture = static_cast<ImageTextureNode *>(
+        textureIt->second.node->clone(graph.get()));
+    NodeDesc nodeDesc = {texture, textureIt->second.mapping};
+    const NukeProjection result = BuildNukeProjection(
+        graph.get(), projection, nodes.Get(cameraName), metersPerUnit);
+    texture->set_extension(result.crop ? EXTENSION_CLIP : EXTENSION_EXTEND);
+    graph->connect(result.coordinates, texture->input("Vector"));
+    if (!result.crop) {
+      /* The extended image edge has no transparent outside: hide the points the camera does not
+       * project on. */
+      VectorMathNode *color = graph->create_node<VectorMathNode>();
+      color->set_math_type(NODE_VECTOR_MATH_MULTIPLY);
+      graph->connect(texture->output("Color"), color->input("Vector1"));
+      graph->connect(result.visible, color->input("Vector2"));
+      MathNode *alpha = graph->create_node<MathNode>();
+      alpha->set_math_type(NODE_MATH_MULTIPLY);
+      graph->connect(texture->output("Alpha"), alpha->input("Value1"));
+      graph->connect(result.visible, alpha->input("Value2"));
+      for (const char *name : {"rgb", "rgba", "result", "r", "g", "b"}) {
+        nodeDesc.outputs[TfToken(name)] = color->output("Vector");
+      }
+      for (const char *name : {"a", "opacity"}) {
+        nodeDesc.outputs[TfToken(name)] = alpha->output("Value");
+      }
+    }
+    const SdfPath projectionPath = MaterialNodeNameToSdfPath(nodeName);
+    _textureScaleBias[projectionPath] = _textureScaleBias[texturePath];
+    _nodes[projectionPath] = nodeDesc;
   }
 
   /* Now that all nodes have been constructed, iterate the network again and build up any
@@ -1245,14 +1291,6 @@ unique_ptr<ShaderGraph> HdCyclesMaterial::BuildShaderGraph(HdMaterialNetworkSche
     }
 
     UpdateConnections(nodeIt->second, nodes.Get(nodeName), nodePath, graph.get());
-  }
-
-  for (const auto &[texture, coordinates] : projectedTextures) {
-    ShaderInput *vector = texture->input("Vector");
-    if (vector->link) {
-      graph->disconnect(vector);
-    }
-    graph->connect(coordinates, vector);
   }
 
   /* Finally connect the terminals to the graph output (Surface, Volume, Displacement). */
