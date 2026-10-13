@@ -4,8 +4,9 @@
 (OptiX, CUDA) or the CPU, with denoising. Connect a `GeoScene` (or any 3D node) to its input;
 the camera is the first camera in the scene, or the prim path in the *camera* knob.
 
-Supported: Nuke 15.0 (USD 23.05), Windows. Each Nuke release ships its own USD, so the plugin is
-built once per Nuke version.
+Supported: Nuke 15.0 (USD 23.05) and Nuke 17.0 (USD 25.08), Windows. Each Nuke release ships
+its own USD, so the plugin is built once per Nuke version. Nuke Indie and Nuke Non-commercial
+cannot load C++ plugins: the node needs Nuke, NukeX or Nuke Studio.
 
 ## Install
 
@@ -77,11 +78,19 @@ cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release ^
 cmake --build build --target install
 ```
 
+For Nuke 17, which ships its USD headers and libraries (`FnUSD`) and whose USD needs no Boost,
+leave out `NUKE_USD_INCLUDE_DIR` and `NUKE_BOOST_INCLUDE_DIR`. Nuke 17 uses oneTBB 2021.13, like
+the precompiled libraries of Blender 5.0: get them from
+`https://projects.blender.org/blender/lib-windows_x64.git` (branch `blender-v5.0-release`) and
+add `-DCYCLES_LIB_DIR=<that folder>`. The Python import library is still generated with
+`make_implibs.ps1`.
+
 OSL is not used by the node. A static Embree (`-DEMBREE_ROOT_DIR=...`) avoids installing the
 precompiled shared one, which brings the SYCL runtime.
 
 The install step copies the libraries the node uses, and renames bundled libraries that Nuke
-also loads in another version (OpenEXR, Imath) with `rename_dlls.py`, so both can be loaded.
+also loads in another version (OpenEXR, Imath, OpenVDB) with `rename_dlls.py`, so both can be
+loaded.
 Install into an empty folder: files of earlier installs are not removed.
 
 ## Debugging

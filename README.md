@@ -6,8 +6,9 @@ Blender's [Cycles](https://www.cycles-renderer.org) path tracer as a render node
 denoising, render passes and Cryptomatte.
 
 > **Status: work in progress.** Tested with Nuke 15.0v1 on Windows 11 with an RTX 4090, in Nuke's terminal mode
-> (`Nuke -t`). Not yet tried in the Nuke GUI. Other Nuke versions are not supported yet: each Nuke release ships its
-> own USD, so the plugin is built once per Nuke version.
+> (`Nuke -t`). Not yet tried in the Nuke GUI. Nuke 17.0 builds (against the 17.0v3 SDK) but is not tested in Nuke
+> yet. Other Nuke versions are not supported yet: each Nuke release ships its own USD, so the plugin is built once
+> per Nuke version. Nuke Indie and Nuke Non-commercial cannot load C++ plugins.
 
 ## Features
 
