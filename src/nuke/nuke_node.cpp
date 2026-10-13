@@ -684,11 +684,7 @@ class CyclesRender : public PlanarIop {
         if (knob_value("projection_mode", 0, 0.0) == 1.0 && focal > 0.0) {
           window.ortho_width = knob_value("haperture", 0, 0.0) / focal;
         }
-        if (window.translate[0] != 0.0 || window.translate[1] != 0.0 || window.scale[0] != 1.0 ||
-            window.scale[1] != 1.0 || window.roll != 0.0 || window.ortho_width != 0.0)
-        {
-          options.camera_windows[prim] = window;
-        }
+        options.camera_windows[prim] = window;
       }
     }
     /* Inputs not in use may be out of date. */
