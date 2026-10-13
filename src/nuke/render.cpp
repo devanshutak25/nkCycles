@@ -12,6 +12,7 @@
 #include "scene/image.h"
 #include "scene/image_loader.h"
 #include "scene/integrator.h"
+#include "scene/object.h"
 #include "scene/pass.h"
 #include "scene/scene.h"
 #include "scene/shader.h"
@@ -263,6 +264,13 @@ CachedSession *cached = nullptr;
  * frames at once. */
 thread_mutex render_mutex;
 
+/* Cryptomatte names of the last synced scene, which has the names Hydra gives to instanced
+ * prims. Metadata is made before rendering, on Nuke's main thread. */
+struct CryptomatteNames {
+  thread_mutex mutex;
+  std::set<string> objects, assets, materials;
+} synced_names;
+
 bool same_passes(const std::vector<PassRequest> &a, const std::vector<PassRequest> &b)
 {
   return std::equal(a.begin(), a.end(), b.begin(), b.end(), [](const auto &x, const auto &y) {
@@ -395,6 +403,19 @@ std::string render(const std::string &usd_text, const RenderOptions &options, Re
   /* The session only raises the samples, but their count sets up the sampling pattern. */
   scene->integrator->set_aa_samples(options.samples);
   set_nuke_images(scene, options.images);
+  {
+    const thread_scoped_lock names_lock(synced_names.mutex);
+    synced_names.objects.clear();
+    synced_names.assets.clear();
+    synced_names.materials.clear();
+    for (const Object *object : scene->objects) {
+      synced_names.objects.insert(object->name.string());
+      synced_names.assets.insert(object->get_asset_name().string());
+    }
+    for (const Shader *shader : scene->shaders) {
+      synced_names.materials.insert(shader->name.string());
+    }
+  }
 
   /* Without denoising the film makes the passes noisy, so denoising again needs new passes. */
   if (!same_passes(passes, cached->passes) || cached->denoise != options.denoise) {
@@ -485,8 +506,16 @@ std::map<std::string, std::string> cryptomatte_metadata(const std::string &usd_t
   if (!stage) {
     return metadata;
   }
-  /* Hydra names objects after their prim, assets after its parent, materials after their prim. */
+  /* The render names objects after their prim, assets after its parent and materials after
+   * their prim. Instanced prims get other names, known once the scene was rendered. */
   std::set<string> objects, assets, materials;
+  {
+    const thread_scoped_lock names_lock(synced_names.mutex);
+    objects = synced_names.objects;
+    assets = synced_names.assets;
+    materials = synced_names.materials;
+  }
+  materials.insert({"default_surface", "default_volume"});
   for (const UsdPrim &prim : stage->Traverse()) {
     if (prim.IsA<UsdGeomGprim>()) {
       objects.insert(prim.GetPath().GetString());
