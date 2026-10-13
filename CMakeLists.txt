@@ -133,6 +133,7 @@ option(WITH_CYCLES_OSL              "Build with OSL support" ON)
 option(WITH_CYCLES_USD              "Build with USD support" ON)
 
 option(WITH_LEGACY_LIBRARIES        "Build with older VFX platform 2024 libraries, for compatibility with Houdini or USD" OFF)
+set(CYCLES_LIB_DIR "" CACHE PATH "Folder of precompiled libraries to use instead of lib/<platform>, like those of another Blender release")
 
 # Development Features
 option(WITH_CYCLES_DEBUG             "Build Cycles with options useful for debugging (e.g., MIS)" OFF)
