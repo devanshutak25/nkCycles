@@ -50,7 +50,8 @@ This is based on [Blender's Cycles repository](https://projects.blender.org/blen
 ## License and notices
 
 Cycles is licensed under the Apache License 2.0, see [LICENSE](LICENSE), with third-party licenses in
-[src/doc/license](src/doc/license).
+[src/doc/license](src/doc/license). The Nuke plugin and the changes made for it are by Devanshu Tak, under the same
+license.
 
 Nuke is a trademark of The Foundry Visionmongers Ltd. This project is not affiliated with or endorsed by Foundry or
 the Blender Foundation. Nuke's NDK headers and libraries are not included: building needs a Nuke installation. The

@@ -1,4 +1,4 @@
-/* SPDX-FileCopyrightText: 2026 Blender Authors
+/* SPDX-FileCopyrightText: 2026 Devanshu Tak
  *
  * SPDX-License-Identifier: Apache-2.0 */
 
